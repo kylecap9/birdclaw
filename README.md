@@ -219,6 +219,8 @@ pnpm cli sync timeline --limit 100 --refresh --json
 pnpm cli sync mention-threads --limit 30 --delay-ms 1500 --timeout-ms 15000 --json
 ```
 
+`sync mention-threads --mode xurl` is a downstream thread-context walker: it only visits mention rows that already exist locally with `kind='mention'`. Populate those rows first with `birdclaw mentions export --refresh --mode xurl`, then run the thread sync to fill parent/root context.
+
 ### Follow graph queries
 
 Follow graph sync is cache-first and defaults to dry-run so repeated agent queries do not keep spending live reads. `auto` prefers `bird` for this path and falls back to `xurl`.

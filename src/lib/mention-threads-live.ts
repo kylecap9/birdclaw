@@ -250,8 +250,8 @@ function mergeMentionThreadIntoLocalStore({
       account_id = excluded.account_id,
       author_profile_id = excluded.author_profile_id,
       kind = case
-        when tweets.kind in ('home', 'mention') then tweets.kind
-        when excluded.kind in ('home', 'mention') then excluded.kind
+        when tweets.kind in ('authored', 'home', 'mention') then tweets.kind
+        when excluded.kind in ('authored', 'home', 'mention') then excluded.kind
         else coalesce(nullif(tweets.kind, ''), excluded.kind)
       end,
       text = excluded.text,

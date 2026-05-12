@@ -355,6 +355,76 @@ describe("mention thread sync", () => {
 		expect(edgeCount.count).toBe(2);
 	});
 
+	it("preserves authored tweet kind when xurl context upserts the same tweet", async () => {
+		setupTempHome();
+		insertMention(
+			"mention_to_authored",
+			"reply to authored",
+			"2026-05-12T10:00:00.000Z",
+		);
+		getNativeDb()
+			.prepare(
+				`
+	    insert into tweets (
+	      id, account_id, author_profile_id, kind, text, created_at,
+	      is_replied, reply_to_id, like_count, media_count, bookmarked, liked,
+	      entities_json, media_json, quoted_tweet_id
+	    ) values (
+	      'authored_context', 'acct_primary', 'profile_user_25401953',
+	      'authored', 'authored original', '2026-05-12T09:58:00.000Z',
+	      0, null, 1, 0, 0, 0, '{}', '[]', null
+	    )
+	    `,
+			)
+			.run();
+		upsertMentionEdge("mention_to_authored", {
+			id: "mention_to_authored",
+			author_id: "42",
+			text: "reply to authored",
+			created_at: "2026-05-12T10:00:00.000Z",
+			conversation_id: "authored_context",
+		});
+		mocks.searchRecentByConversationId.mockResolvedValueOnce({
+			data: [
+				{
+					id: "authored_context",
+					author_id: "25401953",
+					text: "authored original with fresh context",
+					created_at: "2026-05-12T09:58:00.000Z",
+					conversation_id: "authored_context",
+					public_metrics: { like_count: 5 },
+				},
+				{
+					id: "mention_to_authored",
+					author_id: "42",
+					text: "reply to authored",
+					created_at: "2026-05-12T10:00:00.000Z",
+					conversation_id: "authored_context",
+					referenced_tweets: [{ type: "replied_to", id: "authored_context" }],
+				},
+			],
+			includes: {
+				users: [
+					{ id: "25401953", username: "steipete", name: "Peter" },
+					{ id: "42", username: "sam", name: "Sam" },
+				],
+			},
+			meta: { result_count: 2 },
+		});
+		const { syncMentionThreads } = await import("./mention-threads-live");
+
+		await syncMentionThreads({ mode: "xurl", limit: 1, delayMs: 0 });
+
+		const row = getNativeDb()
+			.prepare("select kind, text, like_count from tweets where id = ?")
+			.get("authored_context");
+		expect(row).toEqual({
+			kind: "authored",
+			text: "authored original with fresh context",
+			like_count: 5,
+		});
+	});
+
 	it("falls back to walking the xurl parent chain for older conversations", async () => {
 		setupTempHome();
 		insertMention("mention_old", "old mention", "2026-05-05T11:00:00.000Z");
