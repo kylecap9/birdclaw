@@ -41,6 +41,14 @@ function pbs(name: string) {
 	return { url: `https://pbs.twimg.com/media/${name}.jpg`, type: "image" };
 }
 
+function mp4(name: string, bitrate = 832000) {
+	return {
+		url: `https://video.twimg.com/ext_tw_video/1/pu/vid/720x720/${name}.mp4`,
+		content_type: "video/mp4",
+		bitrate,
+	};
+}
+
 afterEach(() => {
 	resetDatabaseForTests();
 	resetBirdclawPathsForTests();
@@ -180,6 +188,135 @@ describe("media fetch", () => {
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 		expect(sleeps).toEqual([25]);
 		expect(result.duration_ms).toBeGreaterThanOrEqual(25);
+	});
+
+	it("selects the highest-bitrate mp4 video variant", async () => {
+		const root = home();
+		insertTweet("tweet_1", [
+			{
+				type: "video",
+				variants: [
+					{ url: "https://video.twimg.com/hls.m3u8", content_type: "application/x-mpegURL" },
+					mp4("low", 256000),
+					mp4("high", 2176000),
+				],
+			},
+		]);
+
+		const result = await fetchTweetMedia({ dryRun: true });
+
+		expect(result.would_fetch).toEqual([
+			{
+				media_key: "high",
+				tweet_id: "tweet_1",
+				kind: "video",
+				url: "https://video.twimg.com/ext_tw_video/1/pu/vid/720x720/high.mp4",
+				path: path.join(root, "media", "originals", "high.mp4"),
+			},
+		]);
+	});
+
+	it("handles animated gifs as mp4 downloads", async () => {
+		const root = home();
+		insertTweet("tweet_1", [{ type: "animated_gif", variants: [mp4("gif", 0)] }]);
+
+		const result = await fetchTweetMedia({
+			fetchImpl: async () => new Response(new Uint8Array([7, 8])),
+			pacingMs: 0,
+		});
+
+		expect(result).toMatchObject({ fetched: 1, gifs_fetched: 1, gif_bytes: 2 });
+		expect(readFileSync(path.join(root, "media", "originals", "gif.mp4"))).toEqual(
+			Buffer.from([7, 8]),
+		);
+	});
+
+	it("skips HLS-only media instead of attempting manifests", async () => {
+		home();
+		insertTweet("tweet_1", [
+			{
+				type: "video",
+				variants: [
+					{ url: "https://video.twimg.com/hls.m3u8", content_type: "application/x-mpegURL" },
+				],
+			},
+		]);
+		const fetchMock = vi.fn();
+
+		await expect(fetchTweetMedia({ fetchImpl: fetchMock })).resolves.toMatchObject({
+			fetched: 0,
+			failed: 0,
+		});
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("skips oversized media before streaming", async () => {
+		home();
+		insertTweet("tweet_1", [{ type: "video", variants: [mp4("huge")] }]);
+
+		const result = await fetchTweetMedia({
+			fetchImpl: async () =>
+				new Response(new Uint8Array([1]), {
+					headers: { "content-length": "5" },
+				}),
+			maxBytes: 4,
+			pacingMs: 0,
+		});
+
+		expect(result).toMatchObject({
+			failed: 1,
+			failures: [
+				{
+					media_key: "huge",
+					url: "https://video.twimg.com/ext_tw_video/1/pu/vid/720x720/huge.mp4",
+					reason: "max-bytes",
+				},
+			],
+		});
+	});
+
+	it("resumes partial video tmp files with a range request", async () => {
+		const root = home();
+		const mediaDir = path.join(root, "media", "originals");
+		mkdirSync(mediaDir, { recursive: true });
+		writeFileSync(path.join(mediaDir, "resume.tmp"), Buffer.from([1, 2, 3]));
+		insertTweet("tweet_1", [{ type: "video", variants: [mp4("resume")] }]);
+		const fetchMock = vi.fn(
+			async () =>
+				new Response(new Uint8Array([4, 5, 6]), {
+					status: 206,
+					headers: { "content-range": "bytes 3-5/6" },
+				}),
+		);
+
+		await fetchTweetMedia({ fetchImpl: fetchMock, pacingMs: 0 });
+
+		const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+		expect(init.headers).toMatchObject({ range: "bytes=3-" });
+		expect(readFileSync(path.join(mediaDir, "resume.mp4"))).toEqual(
+			Buffer.from([1, 2, 3, 4, 5, 6]),
+		);
+	});
+
+	it("fetches video serially even when image parallelism is higher", async () => {
+		home();
+		insertTweet("tweet_1", [{ type: "video", variants: [mp4("one")] }]);
+		insertTweet("tweet_2", [{ type: "video", variants: [mp4("two")] }]);
+		let clock = 0;
+		const sleeps: number[] = [];
+
+		await fetchTweetMedia({
+			fetchImpl: async () => new Response(new Uint8Array([1])),
+			now: () => clock,
+			sleep: async (ms) => {
+				sleeps.push(ms);
+				clock += ms;
+			},
+			parallel: 3,
+			videoPacingMs: 40,
+		});
+
+		expect(sleeps).toEqual([40]);
 	});
 
 });

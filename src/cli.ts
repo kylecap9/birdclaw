@@ -520,7 +520,11 @@ mediaCommand
 	.option("--since <isoDate>", "Only tweets created at or after this date")
 	.option("--parallel <n>", "Concurrent fetch workers, capped at 5", "1")
 	.option("--pacing-ms <n>", "Delay between request starts", "250")
+	.option("--video-pacing-ms <n>", "Delay between video request starts")
 	.option("--retry-max <n>", "Retries per file after rate limiting", "3")
+	.option("--include-video", "Include video and animated GIF media", true)
+	.option("--no-include-video", "Skip video and animated GIF media")
+	.option("--max-bytes <n>", "Maximum media file size in bytes", "104857600")
 	.option("--dry-run", "List what would be fetched without downloading")
 	.option("--json", "Emit JSON output")
 	.action(async (options) => {
@@ -537,6 +541,17 @@ mediaCommand
 			options.retryMax,
 			"--retry-max",
 		) ?? 3;
+		const videoPacingMs =
+			options.videoPacingMs === undefined
+				? undefined
+				: parseNonNegativeIntegerOption(
+						options.videoPacingMs,
+						"--video-pacing-ms",
+					);
+		const maxBytes = parseNonNegativeIntegerOption(
+			options.maxBytes,
+			"--max-bytes",
+		) ?? 100 * 1024 * 1024;
 		if (process.exitCode) {
 			return;
 		}
@@ -548,7 +563,10 @@ mediaCommand
 			since: options.since,
 			parallel,
 			pacingMs,
+			videoPacingMs,
 			retryMax,
+			includeVideo: Boolean(options.includeVideo),
+			maxBytes,
 			dryRun: Boolean(options.dryRun),
 		});
 		const asJson = Boolean(program.opts().json || options.json);
