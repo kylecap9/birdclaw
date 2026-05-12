@@ -606,6 +606,92 @@ describe("mention thread sync", () => {
 		});
 	});
 
+	it("walks parents for legacy mentions with reply ids but no conversation id", async () => {
+		setupTempHome();
+		insertMention(
+			"mention_legacy_reply",
+			"legacy mention with local reply id",
+			"2026-05-05T11:00:00.000Z",
+		);
+		getNativeDb()
+			.prepare("update tweets set is_replied = 1, reply_to_id = ? where id = ?")
+			.run("parent_legacy_reply", "mention_legacy_reply");
+		upsertMentionEdge("mention_legacy_reply", {
+			id: "mention_legacy_reply",
+			author_id: "42",
+			text: "legacy mention with no conversation id",
+			created_at: "2026-05-05T11:00:00.000Z",
+		});
+		mocks.getTweetById
+			.mockResolvedValueOnce({
+				data: [
+					{
+						id: "parent_legacy_reply",
+						author_id: "43",
+						text: "legacy parent",
+						created_at: "2026-05-05T10:58:00.000Z",
+						referenced_tweets: [
+							{ type: "replied_to", id: "root_legacy_reply" },
+						],
+						in_reply_to_user_id: "25401953",
+					},
+				],
+				includes: { users: [{ id: "43", username: "alex", name: "Alex" }] },
+			})
+			.mockResolvedValueOnce({
+				data: [
+					{
+						id: "root_legacy_reply",
+						author_id: "25401953",
+						text: "legacy root",
+						created_at: "2026-05-05T10:55:00.000Z",
+					},
+				],
+				includes: {
+					users: [{ id: "25401953", username: "steipete", name: "Peter" }],
+				},
+			});
+		const { syncMentionThreads } = await import("./mention-threads-live");
+
+		const result = await syncMentionThreads({
+			mode: "xurl",
+			limit: 1,
+			delayMs: 0,
+		});
+		const rows = getNativeDb()
+			.prepare(
+				"select id, reply_to_id from tweets where id in (?, ?, ?) order by id",
+			)
+			.all("mention_legacy_reply", "parent_legacy_reply", "root_legacy_reply");
+
+		expect(mocks.searchRecentByConversationId).not.toHaveBeenCalled();
+		expect(mocks.getTweetById).toHaveBeenNthCalledWith(
+			1,
+			"parent_legacy_reply",
+		);
+		expect(mocks.getTweetById).toHaveBeenNthCalledWith(2, "root_legacy_reply");
+		expect(result).toMatchObject({
+			mergedTweets: 3,
+			generalReadTweets: 2,
+			warnings: expect.arrayContaining([
+				"missing conversation_id for mention_legacy_reply; used parent walk",
+			]),
+			results: [
+				expect.objectContaining({
+					tweetId: "mention_legacy_reply",
+					strategy: "parent_walk",
+					fallbackDepth: 2,
+					count: 3,
+				}),
+			],
+		});
+		expect(rows).toEqual([
+			{ id: "mention_legacy_reply", reply_to_id: "parent_legacy_reply" },
+			{ id: "parent_legacy_reply", reply_to_id: "root_legacy_reply" },
+			{ id: "root_legacy_reply", reply_to_id: null },
+		]);
+	});
+
 	it("falls back to walking the xurl parent chain for older conversations", async () => {
 		setupTempHome();
 		insertMention("mention_old", "old mention", "2026-05-05T11:00:00.000Z");

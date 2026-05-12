@@ -479,6 +479,24 @@ async function fetchThreadContextViaXurl({
 	maxFallbackDepth: number;
 }) {
 	if (!mention.conversationId) {
+		if (mention.replyToId) {
+			const fallback = await fetchParentChainViaXurl({
+				mention,
+				maxDepth: maxFallbackDepth,
+			});
+			return {
+				strategy: "parent_walk" as const,
+				pages: 0,
+				truncated: false,
+				payload: fallback.payload,
+				fallbackDepth: fallback.fallbackDepth,
+				generalReadTweets: fallback.generalReadTweets,
+				warnings: [
+					`missing conversation_id for ${mention.id}; used parent walk`,
+					...fallback.warnings,
+				],
+			};
+		}
 		return {
 			strategy: "skipped:no_conversation_id" as const,
 			payload: { data: [] } satisfies XurlMentionsResponse,
