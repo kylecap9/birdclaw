@@ -102,7 +102,7 @@ Flags:
 - `--refresh` — bypass the live-cache freshness window
 - `--cache-ttl <seconds>` — tune the live-cache freshness window (default `120`)
 
-On a first xurl run without `--since-id` or `--start-time`, Birdclaw seeds `since_id` from the newest local mention row for that account so archive-backed stores do not re-fetch old mentions. Use `--start-time` for deliberate historical backfills; an explicit `--since-id` always wins.
+On a first xurl run without `--since-id` or `--start-time`, Birdclaw seeds `since_id` from the newest archive/legacy mention row for that account so archive-backed stores do not re-fetch old mentions. Live-only mention edges are not used as a baseline because they may be partial. Use `--start-time` for deliberate historical backfills; an explicit `--since-id` always wins.
 
 `sync mentions` and [`mentions export`](mentions.md) are now distinct: `sync mentions` is the ingest, `mentions export` is the DB-backed export-to-script view. Run `sync mentions` first, then [`sync mention-threads`](#sync-mention-threads) to backfill parent/root conversation context.
 

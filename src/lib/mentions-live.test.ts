@@ -42,10 +42,12 @@ function insertLocalMentionBaseline({
 	tweetId = "1000",
 	accountId = "acct_primary",
 	tweetAccountId = accountId,
+	source = "archive",
 }: {
 	tweetId?: string;
 	accountId?: string;
 	tweetAccountId?: string;
+	source?: string;
 } = {}) {
 	const db = getNativeDb();
 	db.prepare(
@@ -67,11 +69,11 @@ function insertLocalMentionBaseline({
       source, raw_json, updated_at
     ) values (
       ?, ?, 'mention', '2026-03-09T01:59:00.000Z',
-      '2026-03-09T01:59:00.000Z', 1, 'archive', '{}',
+      '2026-03-09T01:59:00.000Z', 1, ?, '{}',
       '2026-03-09T01:59:00.000Z'
     )
     `,
-	).run(accountId, tweetId);
+	).run(accountId, tweetId, source);
 }
 
 describe("cached live mentions", () => {
@@ -321,7 +323,7 @@ describe("cached live mentions", () => {
 		});
 	});
 
-	it("seeds first-run xurl mention sync from the newest local mention id", async () => {
+	it("seeds first-run xurl mention sync from the newest archive mention id", async () => {
 		makeTempHome();
 		clearLocalMentionRows();
 		insertLocalMentionBaseline();
@@ -345,6 +347,46 @@ describe("cached live mentions", () => {
 			paginationToken: undefined,
 			sinceId: "1000",
 		});
+	});
+
+	it("does not seed first-run xurl mention sync from live-only mention edges", async () => {
+		makeTempHome();
+		clearLocalMentionRows();
+		insertLocalMentionBaseline({ tweetId: "2000", source: "xurl" });
+		const consoleErrorMock = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
+		listMentionsViaXurlMock.mockResolvedValueOnce({
+			data: [],
+			meta: { result_count: 0 },
+		});
+		const { syncMentions } = await import("./mentions-live");
+
+		try {
+			await syncMentions({
+				account: "acct_primary",
+				mode: "xurl",
+				limit: 5,
+				refresh: true,
+			});
+			expect(consoleErrorMock).toHaveBeenCalledWith(
+				"No local mention baseline found; syncing mentions from the newest page backwards.",
+			);
+		} finally {
+			consoleErrorMock.mockRestore();
+		}
+
+		const call = listMentionsViaXurlMock.mock.calls[0]?.[0] as Record<
+			string,
+			unknown
+		>;
+		expect(call).toMatchObject({
+			maxResults: 5,
+			username: "steipete",
+			userId: "25401953",
+			paginationToken: undefined,
+		});
+		expect(call).not.toHaveProperty("sinceId");
 	});
 
 	it("ignores nonnumeric local mention ids when seeding xurl since_id", async () => {

@@ -289,7 +289,7 @@ function resolveAccount(db: Database, accountId?: string) {
 	};
 }
 
-function findNewestLocalMentionId(db: Database, accountId: string) {
+function findNewestArchiveMentionId(db: Database, accountId: string) {
 	const row = db
 		.prepare(
 			`
@@ -299,6 +299,7 @@ function findNewestLocalMentionId(db: Database, accountId: string) {
         on e.tweet_id = t.id
       where e.account_id = ?
         and e.kind = 'mention'
+        and e.source in ('archive', 'legacy')
         and length(t.id) > 0
         and t.id glob '[0-9]*'
         and t.id not glob '*[^0-9]*'
@@ -656,7 +657,7 @@ export async function syncMentions({
 		!explicitSinceId &&
 		!explicitStartTime &&
 		!startPaginationToken
-			? findNewestLocalMentionId(db, resolvedAccount.accountId)
+			? findNewestArchiveMentionId(db, resolvedAccount.accountId)
 			: undefined;
 	const resolvedSinceId = startPaginationToken
 		? undefined
