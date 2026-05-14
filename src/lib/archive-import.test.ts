@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { __test__, importArchive } from "./archive-import";
 import { resetBirdclawPathsForTests } from "./config";
 import { getNativeDb, resetDatabaseForTests } from "./db";
+import { listFollowEvents, listUnfollowedSince } from "./follow-graph";
 import {
 	getQueryEnvelope,
 	listDmConversations,
@@ -15,7 +16,7 @@ import {
 
 const createdDirs: string[] = [];
 
-function makeArchive() {
+function makeArchive({ following = [] }: { following?: string[] } = {}) {
 	const root = mkdtempSync(path.join(os.tmpdir(), "birdclaw-archive-"));
 	const archiveDir = path.join(root, "sample", "data");
 	mkdirSync(archiveDir, { recursive: true });
@@ -139,6 +140,19 @@ function makeArchive() {
   }
 ]`,
 	);
+	if (following.length > 0) {
+		writeFileSync(
+			path.join(archiveDir, "following.js"),
+			`window.YTD.following.part0 = ${JSON.stringify(
+				following.map((id) => ({
+					following: {
+						accountId: id,
+						userLink: `https://twitter.com/intent/user?user_id=${id}`,
+					},
+				})),
+			)}`,
+		);
+	}
 
 	const archivePath = path.join(root, "archive.zip");
 	execFileSync("zip", ["-qr", archivePath, "sample"], { cwd: root });
@@ -194,14 +208,13 @@ function makeRootDataArchive() {
   }
 ]`,
 	);
-
 	const archivePath = path.join(root, "archive.zip");
 	execFileSync("zip", ["-qr", archivePath, "data"], { cwd: root });
 	createdDirs.push(root);
 	return archivePath;
 }
 
-function makeWeirdArchive() {
+function makeWeirdArchive({ followers = [] }: { followers?: string[] } = {}) {
 	const root = mkdtempSync(path.join(os.tmpdir(), "birdclaw-archive-weird-"));
 	const archiveDir = path.join(root, "sample", "data");
 	mkdirSync(archiveDir, { recursive: true });
@@ -273,6 +286,122 @@ function makeWeirdArchive() {
   }
 ]`,
 	);
+	if (followers.length > 0) {
+		writeFileSync(
+			path.join(archiveDir, "follower.js"),
+			`window.YTD.follower.part0 = ${JSON.stringify(
+				followers.map((id) => ({
+					follower: {
+						accountId: id,
+						userLink: `https://twitter.com/intent/user?user_id=${id}`,
+					},
+				})),
+			)}`,
+		);
+	}
+
+	const archivePath = path.join(root, "archive.zip");
+	execFileSync("zip", ["-qr", archivePath, "sample"], { cwd: root });
+	createdDirs.push(root);
+	return archivePath;
+}
+
+function makeFollowArchive({
+	followers = [],
+	following = [],
+	includeFollowers = true,
+	includeFollowing = true,
+}: {
+	followers?: string[];
+	following?: string[];
+	includeFollowers?: boolean;
+	includeFollowing?: boolean;
+}) {
+	const root = mkdtempSync(path.join(os.tmpdir(), "birdclaw-archive-follow-"));
+	const archiveDir = path.join(root, "sample", "data");
+	mkdirSync(archiveDir, { recursive: true });
+
+	writeFileSync(
+		path.join(archiveDir, "account.js"),
+		'window.YTD.account.part0 = [{ "account": { "accountId": "25401953", "username": "steipete" } }]',
+	);
+	if (includeFollowers) {
+		writeFileSync(
+			path.join(archiveDir, "follower.js"),
+			`window.YTD.follower.part0 = ${JSON.stringify(
+				followers.map((id) => ({
+					follower: {
+						accountId: id,
+						userLink: `https://twitter.com/intent/user?user_id=${id}`,
+					},
+				})),
+			)}`,
+		);
+	}
+	if (includeFollowing) {
+		writeFileSync(
+			path.join(archiveDir, "following.js"),
+			`window.YTD.following.part0 = ${JSON.stringify(
+				following.map((id) => ({
+					following: {
+						accountId: id,
+						userLink: `https://twitter.com/intent/user?user_id=${id}`,
+					},
+				})),
+			)}`,
+		);
+	}
+
+	const archivePath = path.join(root, "archive.zip");
+	execFileSync("zip", ["-qr", archivePath, "sample"], { cwd: root });
+	createdDirs.push(root);
+	return archivePath;
+}
+
+function makeFollowDmArchive(userId: string) {
+	const root = mkdtempSync(
+		path.join(os.tmpdir(), "birdclaw-archive-follow-dm-"),
+	);
+	const archiveDir = path.join(root, "sample", "data");
+	mkdirSync(archiveDir, { recursive: true });
+
+	writeFileSync(
+		path.join(archiveDir, "account.js"),
+		'window.YTD.account.part0 = [{ "account": { "accountId": "25401953", "username": "steipete" } }]',
+	);
+	writeFileSync(
+		path.join(archiveDir, "follower.js"),
+		`window.YTD.follower.part0 = ${JSON.stringify([
+			{
+				follower: {
+					accountId: userId,
+					userLink: `https://twitter.com/intent/user?user_id=${userId}`,
+				},
+			},
+		])}`,
+	);
+	writeFileSync(
+		path.join(archiveDir, "direct-messages.js"),
+		`window.YTD.direct_messages.part0 = ${JSON.stringify([
+			{
+				dmConversation: {
+					conversationId: `dm-${userId}`,
+					messages: [
+						{
+							messageCreate: {
+								id: `m-${userId}`,
+								senderId: userId,
+								recipientId: "25401953",
+								createdAt: "2025-06-03T20:00:00.000Z",
+								text: "hello from a follower",
+								mediaUrls: [],
+							},
+						},
+					],
+				},
+			},
+		])}`,
+	);
 
 	const archivePath = path.join(root, "archive.zip");
 	execFileSync("zip", ["-qr", archivePath, "sample"], { cwd: root });
@@ -329,6 +458,8 @@ describe("archive import", () => {
 		expect(result.counts.tweets).toBe(2);
 		expect(result.counts.likes).toBe(1);
 		expect(result.counts.bookmarks).toBe(1);
+		expect(result.counts.followers).toBe(0);
+		expect(result.counts.following).toBe(0);
 		expect(envelope.stats.home).toBe(2);
 		expect(envelope.stats.dms).toBe(1);
 		expect(tweets.map((item) => item.text)).toEqual([
@@ -349,6 +480,793 @@ describe("archive import", () => {
 		expect(liked.map((item) => item.text)).toEqual(["liked archive item"]);
 		expect(bookmarked.map((item) => item.text)).toEqual(["saved archive item"]);
 	}, 30000);
+
+	it("creates authored edges for archive-imported account tweets", async () => {
+		const archivePath = makeArchive();
+		const homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-home-"));
+		createdDirs.push(homeDir);
+		process.env.BIRDCLAW_HOME = homeDir;
+
+		await importArchive(archivePath);
+		const db = getNativeDb();
+		const accountTweets = db
+			.prepare(
+				`
+        select id, created_at
+        from tweets
+        where account_id = 'acct_primary' and author_profile_id = 'profile_me'
+        order by id
+        `,
+			)
+			.all() as Array<{ id: string; created_at: string }>;
+		const authoredEdges = db
+			.prepare(
+				`
+        select edge.tweet_id, edge.source, edge.first_seen_at, edge.last_seen_at
+        from tweet_account_edges edge
+        join tweets tweet on tweet.id = edge.tweet_id
+        where edge.account_id = 'acct_primary'
+          and edge.kind = 'authored'
+          and tweet.author_profile_id = 'profile_me'
+        order by edge.tweet_id
+        `,
+			)
+			.all() as Array<{
+			tweet_id: string;
+			source: string;
+			first_seen_at: string;
+			last_seen_at: string;
+		}>;
+
+		expect(authoredEdges).toEqual(
+			accountTweets.map((tweet) => ({
+				tweet_id: tweet.id,
+				source: "archive",
+				first_seen_at: tweet.created_at,
+				last_seen_at: tweet.created_at,
+			})),
+		);
+	});
+
+	it("imports follower and following archive files into the follow graph", async () => {
+		const archivePath = makeFollowArchive({
+			followers: ["101", "102"],
+			following: ["102", "103"],
+		});
+		const homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-home-"));
+		createdDirs.push(homeDir);
+		process.env.BIRDCLAW_HOME = homeDir;
+
+		const result = await importArchive(archivePath);
+		const db = getNativeDb();
+		const edges = db
+			.prepare(
+				`
+        select direction || ':' || profile_id || ':' || external_user_id || ':' || source || ':' || current as value
+        from follow_edges
+        order by direction, external_user_id
+        `,
+			)
+			.all() as Array<{ value: string }>;
+		const events = db
+			.prepare(
+				`
+        select direction || ':' || external_user_id || ':' || kind as value
+        from follow_events
+        order by direction, external_user_id
+        `,
+			)
+			.all() as Array<{ value: string }>;
+		const snapshots = db
+			.prepare(
+				`
+        select direction || ':' || source || ':' || status || ':' || result_count as value
+        from follow_snapshots
+        order by direction
+        `,
+			)
+			.all() as Array<{ value: string }>;
+
+		expect(result.counts.followers).toBe(2);
+		expect(result.counts.following).toBe(2);
+		expect(edges.map((row) => row.value)).toEqual([
+			"followers:profile_user_101:101:archive:1",
+			"followers:profile_user_102:102:archive:1",
+			"following:profile_user_102:102:archive:1",
+			"following:profile_user_103:103:archive:1",
+		]);
+		expect(events.map((row) => row.value)).toEqual([
+			"followers:101:started",
+			"followers:102:started",
+			"following:102:started",
+			"following:103:started",
+		]);
+		expect(snapshots.map((row) => row.value)).toEqual([
+			"followers:archive:complete:2",
+			"following:archive:complete:2",
+		]);
+		expect(
+			db
+				.prepare(
+					"select handle, display_name, bio from profiles where id = 'profile_user_101'",
+				)
+				.get(),
+		).toEqual({ handle: "id101", display_name: "", bio: "" });
+	});
+
+	it("handles empty follower and following files", async () => {
+		const archivePath = makeFollowArchive({});
+		const homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-home-"));
+		createdDirs.push(homeDir);
+		process.env.BIRDCLAW_HOME = homeDir;
+
+		const result = await importArchive(archivePath);
+		const db = getNativeDb();
+
+		expect(result.counts.followers).toBe(0);
+		expect(result.counts.following).toBe(0);
+		expect(
+			(
+				db.prepare("select count(*) as count from follow_edges").get() as {
+					count: number;
+				}
+			).count,
+		).toBe(0);
+		expect(
+			(
+				db.prepare("select count(*) as count from follow_events").get() as {
+					count: number;
+				}
+			).count,
+		).toBe(0);
+		expect(
+			(
+				db.prepare("select count(*) as count from follow_snapshots").get() as {
+					count: number;
+				}
+			).count,
+		).toBe(2);
+	});
+
+	it("re-imports follower data without duplicate follow events or snapshots", async () => {
+		const archivePath = makeFollowArchive({
+			followers: ["101", "102"],
+			following: ["103"],
+		});
+		const homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-home-"));
+		createdDirs.push(homeDir);
+		process.env.BIRDCLAW_HOME = homeDir;
+
+		await importArchive(archivePath);
+		const db = getNativeDb();
+		const readArchiveSnapshots = () =>
+			db
+				.prepare(
+					`
+          select direction, id, result_count
+          from follow_snapshots
+          where source = 'archive'
+          order by direction
+        `,
+				)
+				.all();
+		const readArchiveMembers = () =>
+			db
+				.prepare(
+					`
+          select s.direction, count(m.profile_id) as count
+          from follow_snapshots s
+          left join follow_snapshot_members m on m.snapshot_id = s.id
+          where s.source = 'archive'
+          group by s.direction
+          order by s.direction
+        `,
+				)
+				.all();
+		const firstSnapshots = readArchiveSnapshots();
+		const firstMembers = readArchiveMembers();
+
+		await importArchive(archivePath);
+
+		expect(
+			(
+				db.prepare("select count(*) as count from follow_edges").get() as {
+					count: number;
+				}
+			).count,
+		).toBe(3);
+		expect(
+			(
+				db.prepare("select count(*) as count from follow_events").get() as {
+					count: number;
+				}
+			).count,
+		).toBe(3);
+		expect(readArchiveSnapshots()).toEqual(firstSnapshots);
+		expect(readArchiveMembers()).toEqual(firstMembers);
+		expect(firstSnapshots).toEqual([
+			{
+				direction: "followers",
+				id: "follow_snapshot_archive_acct_primary_followers",
+				result_count: 2,
+			},
+			{
+				direction: "following",
+				id: "follow_snapshot_archive_acct_primary_following",
+				result_count: 1,
+			},
+		]);
+		expect(firstMembers).toEqual([
+			{ count: 2, direction: "followers" },
+			{ count: 1, direction: "following" },
+		]);
+	});
+
+	it("preserves hydrated follow profile metadata on archive import", async () => {
+		const archivePath = makeFollowArchive({
+			followers: ["900"],
+			includeFollowing: false,
+		});
+		const homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-home-"));
+		createdDirs.push(homeDir);
+		process.env.BIRDCLAW_HOME = homeDir;
+		const db = getNativeDb();
+		db.prepare(
+			`
+      insert into profiles (
+        id, handle, display_name, bio, followers_count, following_count,
+        avatar_hue, avatar_url, created_at
+      ) values (
+        'profile_user_900', 'real900', 'Real User', 'Hydrated bio', 123, 45,
+        33, 'https://img.example.com/avatar.jpg', '2026-05-01T00:00:00.000Z'
+      )
+      `,
+		).run();
+		db.prepare(
+			`
+      insert into follow_edges (
+        account_id, direction, profile_id, external_user_id, source, current,
+        first_seen_at, last_seen_at, ended_at, updated_at
+      ) values (
+        'acct_primary', 'followers', 'profile_user_900', '900', 'xurl', 1,
+        '2026-05-01T00:00:00.000Z', '2026-05-01T00:00:00.000Z', null,
+        '2026-05-01T00:00:00.000Z'
+      )
+      `,
+		).run();
+
+		await importArchive(archivePath);
+
+		expect(
+			db
+				.prepare(
+					`
+          select handle, display_name, bio, followers_count, following_count,
+            avatar_hue, avatar_url
+          from profiles
+          where id = 'profile_user_900'
+        `,
+				)
+				.get(),
+		).toEqual({
+			handle: "real900",
+			display_name: "Real User",
+			bio: "Hydrated bio",
+			followers_count: 123,
+			following_count: 45,
+			avatar_hue: 33,
+			avatar_url: "https://img.example.com/avatar.jpg",
+		});
+	});
+
+	it("preserves hydrated profile columns on archive re-import", async () => {
+		const archivePath = makeFollowArchive({
+			followers: ["900"],
+			includeFollowing: false,
+		});
+		const homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-home-"));
+		createdDirs.push(homeDir);
+		process.env.BIRDCLAW_HOME = homeDir;
+
+		await importArchive(archivePath);
+		const db = getNativeDb();
+		db.prepare(
+			`
+      update profiles
+      set handle = 'real900',
+        display_name = 'Real User',
+        followers_count = 123,
+        public_metrics_json = ?,
+        location = 'London',
+        raw_json = ?
+      where id = 'profile_user_900'
+      `,
+		).run(
+			'{"followers_count":123,"following_count":45}',
+			'{"id":"900","username":"real900","description":"hydrated"}',
+		);
+
+		await importArchive(archivePath);
+
+		expect(
+			db
+				.prepare(
+					`
+          select public_metrics_json, location, raw_json
+          from profiles
+          where id = 'profile_user_900'
+        `,
+				)
+				.get(),
+		).toEqual({
+			public_metrics_json: '{"followers_count":123,"following_count":45}',
+			location: "London",
+			raw_json: '{"id":"900","username":"real900","description":"hydrated"}',
+		});
+	});
+
+	it("preserves hydrated DM-only profile columns on archive re-import", async () => {
+		const archivePath = makeRootDataArchive();
+		const homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-home-"));
+		createdDirs.push(homeDir);
+		process.env.BIRDCLAW_HOME = homeDir;
+
+		await importArchive(archivePath);
+		const db = getNativeDb();
+		db.prepare(
+			`
+      update profiles
+      set handle = 'real42',
+        display_name = 'Real DM User',
+        followers_count = 321,
+        public_metrics_json = ?,
+        location = 'London',
+        raw_json = ?
+      where id = 'profile_user_42'
+      `,
+		).run(
+			'{"followers_count":321,"following_count":54}',
+			'{"id":"42","username":"real42","description":"hydrated"}',
+		);
+
+		await importArchive(archivePath);
+
+		expect(
+			db
+				.prepare(
+					`
+          select handle, display_name, followers_count, public_metrics_json,
+            location, raw_json
+          from profiles
+          where id = 'profile_user_42'
+        `,
+				)
+				.get(),
+		).toEqual({
+			handle: "real42",
+			display_name: "Real DM User",
+			followers_count: 321,
+			public_metrics_json: '{"followers_count":321,"following_count":54}',
+			location: "London",
+			raw_json: '{"id":"42","username":"real42","description":"hydrated"}',
+		});
+	});
+
+	it("upgrades DM-only placeholder profiles from archive mention metadata on re-import", async () => {
+		const firstArchivePath = makeRootDataArchive();
+		const secondArchivePath = makeArchive();
+		const homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-home-"));
+		createdDirs.push(homeDir);
+		process.env.BIRDCLAW_HOME = homeDir;
+
+		await importArchive(firstArchivePath);
+		const db = getNativeDb();
+
+		await importArchive(secondArchivePath);
+
+		expect(
+			db
+				.prepare(
+					`
+          select handle, display_name, bio
+          from profiles
+          where id = 'profile_user_42'
+        `,
+				)
+				.get(),
+		).toEqual({
+			handle: "sam",
+			display_name: "sam",
+			bio: "Imported from archive user 42",
+		});
+	});
+
+	it("preserves mention-inferred DM profiles when a later archive lacks mention metadata", async () => {
+		const firstArchivePath = makeRootDataArchive();
+		const secondArchivePath = makeArchive();
+		const thirdArchivePath = makeRootDataArchive();
+		const homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-home-"));
+		createdDirs.push(homeDir);
+		process.env.BIRDCLAW_HOME = homeDir;
+
+		await importArchive(firstArchivePath);
+		await importArchive(secondArchivePath);
+		const db = getNativeDb();
+		await importArchive(thirdArchivePath);
+
+		expect(
+			db
+				.prepare(
+					`
+          select handle, display_name, bio
+          from profiles
+          where id = 'profile_user_42'
+        `,
+				)
+				.get(),
+		).toEqual({
+			handle: "sam",
+			display_name: "sam",
+			bio: "Imported from archive user 42",
+		});
+	});
+
+	it("preserves mention-inferred DM profiles when follow rows overlap on re-import", async () => {
+		const firstArchivePath = makeRootDataArchive();
+		const secondArchivePath = makeArchive({ following: ["42"] });
+		const homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-home-"));
+		createdDirs.push(homeDir);
+		process.env.BIRDCLAW_HOME = homeDir;
+
+		await importArchive(firstArchivePath);
+		await importArchive(secondArchivePath);
+		const db = getNativeDb();
+
+		expect(
+			db
+				.prepare(
+					`
+          select handle, display_name, bio
+          from profiles
+          where id = 'profile_user_42'
+        `,
+				)
+				.get(),
+		).toEqual({
+			handle: "sam",
+			display_name: "sam",
+			bio: "Imported from archive user 42",
+		});
+	});
+
+	it("preserves hydrated group-DM sender profiles when follow rows overlap", async () => {
+		const archivePath = makeWeirdArchive({ followers: ["42"] });
+		const homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-home-"));
+		createdDirs.push(homeDir);
+		process.env.BIRDCLAW_HOME = homeDir;
+		const db = getNativeDb();
+		db.prepare(
+			`
+      insert into profiles (
+        id, handle, display_name, bio, followers_count, following_count,
+        public_metrics_json, avatar_hue, location, raw_json, created_at
+      ) values (
+        'profile_user_42', 'real42', 'Real Group Sender', 'Hydrated bio',
+        321, 54, ?, 33, 'London', ?, '2026-05-01T00:00:00.000Z'
+      )
+      `,
+		).run(
+			'{"followers_count":321,"following_count":54}',
+			'{"id":"42","username":"real42","description":"hydrated"}',
+		);
+
+		await importArchive(archivePath);
+
+		expect(
+			db
+				.prepare(
+					`
+          select handle, display_name, bio, followers_count, following_count,
+            public_metrics_json, location, raw_json
+          from profiles
+          where id = 'profile_user_42'
+        `,
+				)
+				.get(),
+		).toEqual({
+			handle: "real42",
+			display_name: "Real Group Sender",
+			bio: "Hydrated bio",
+			followers_count: 321,
+			following_count: 54,
+			public_metrics_json: '{"followers_count":321,"following_count":54}',
+			location: "London",
+			raw_json: '{"id":"42","username":"real42","description":"hydrated"}',
+		});
+	});
+
+	it("merges hydrated profile metadata when archive DM and follower rows overlap", async () => {
+		const archivePath = makeFollowDmArchive("900");
+		const homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-home-"));
+		createdDirs.push(homeDir);
+		process.env.BIRDCLAW_HOME = homeDir;
+		const db = getNativeDb();
+		db.prepare(
+			`
+      insert into profiles (
+        id, handle, display_name, bio, followers_count, following_count,
+        avatar_hue, avatar_url, created_at
+      ) values (
+        'profile_user_900', 'real900', 'Real User', 'Hydrated bio', 123, 45,
+        33, 'https://img.example.com/avatar.jpg', '2026-05-01T00:00:00.000Z'
+      )
+      `,
+		).run();
+		db.prepare(
+			`
+      insert into follow_edges (
+        account_id, direction, profile_id, external_user_id, source, current,
+        first_seen_at, last_seen_at, ended_at, updated_at
+      ) values (
+        'acct_primary', 'followers', 'profile_user_900', '900', 'xurl', 1,
+        '2026-05-01T00:00:00.000Z', '2026-05-01T00:00:00.000Z', null,
+        '2026-05-01T00:00:00.000Z'
+      )
+      `,
+		).run();
+
+		await importArchive(archivePath);
+
+		expect(
+			db
+				.prepare(
+					`
+          select handle, display_name, bio, followers_count, following_count,
+            avatar_hue, avatar_url
+          from profiles
+          where id = 'profile_user_900'
+        `,
+				)
+				.get(),
+		).toEqual({
+			handle: "real900",
+			display_name: "Real User",
+			bio: "Hydrated bio",
+			followers_count: 123,
+			following_count: 45,
+			avatar_hue: 33,
+			avatar_url: "https://img.example.com/avatar.jpg",
+		});
+	});
+
+	it("clears archive follower rows when follower file is absent", async () => {
+		const firstArchivePath = makeFollowArchive({
+			followers: ["101", "102"],
+			includeFollowing: false,
+		});
+		const secondArchivePath = makeFollowArchive({
+			following: ["201"],
+			includeFollowers: false,
+		});
+		const homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-home-"));
+		createdDirs.push(homeDir);
+		process.env.BIRDCLAW_HOME = homeDir;
+
+		await importArchive(firstArchivePath);
+		const db = getNativeDb();
+		expect(
+			(
+				db
+					.prepare(
+						`
+            select count(*) as count
+            from follow_events
+            where direction = 'followers'
+              and snapshot_id = 'follow_snapshot_archive_acct_primary_followers'
+          `,
+					)
+					.get() as { count: number }
+			).count,
+		).toBe(2);
+		db.prepare(
+			`
+      insert into follow_edges (
+        account_id, direction, profile_id, external_user_id, source, current,
+        first_seen_at, last_seen_at, ended_at, updated_at
+      ) values (
+        'acct_primary', 'followers', 'profile_user_900', '900', 'xurl', 1,
+        '2026-05-01T00:00:00.000Z', '2026-05-01T00:00:00.000Z', null,
+        '2026-05-01T00:00:00.000Z'
+      )
+      `,
+		).run();
+
+		await importArchive(secondArchivePath);
+
+		expect(
+			db
+				.prepare(
+					`
+          select external_user_id, source, current
+          from follow_edges
+          where direction = 'followers'
+          order by external_user_id
+        `,
+				)
+				.all(),
+		).toEqual([{ external_user_id: "900", source: "xurl", current: 1 }]);
+		expect(
+			(
+				db
+					.prepare(
+						`
+            select count(*) as count
+            from follow_snapshots
+            where direction = 'followers' and source = 'archive'
+          `,
+					)
+					.get() as { count: number }
+			).count,
+		).toBe(0);
+		expect(
+			(
+				db
+					.prepare(
+						`
+            select count(*) as count
+            from follow_snapshot_members
+            where snapshot_id like 'follow_snapshot_archive_acct_primary_followers%'
+          `,
+					)
+					.get() as { count: number }
+			).count,
+		).toBe(0);
+		expect(
+			(
+				db
+					.prepare(
+						`
+            select count(*) as count
+            from follow_events
+            where direction = 'followers'
+              and snapshot_id = 'follow_snapshot_archive_acct_primary_followers'
+          `,
+					)
+					.get() as { count: number }
+			).count,
+		).toBe(0);
+		expect(
+			db
+				.prepare(
+					"select id from profiles where id in ('profile_user_101', 'profile_user_102') order by id",
+				)
+				.all(),
+		).toEqual([]);
+	});
+
+	it("preserves live follower source when an overlapping archive is later absent", async () => {
+		const firstArchivePath = makeFollowArchive({
+			followers: ["900"],
+			includeFollowing: false,
+		});
+		const secondArchivePath = makeFollowArchive({
+			following: ["201"],
+			includeFollowers: false,
+		});
+		const homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-home-"));
+		createdDirs.push(homeDir);
+		process.env.BIRDCLAW_HOME = homeDir;
+		const db = getNativeDb();
+		db.prepare(
+			`
+      insert into follow_edges (
+        account_id, direction, profile_id, external_user_id, source, current,
+        first_seen_at, last_seen_at, ended_at, updated_at
+      ) values (
+        'acct_primary', 'followers', 'profile_user_900', '900', 'xurl', 1,
+        '2026-05-01T00:00:00.000Z', '2026-05-01T00:00:00.000Z', null,
+        '2026-05-01T00:00:00.000Z'
+      )
+      `,
+		).run();
+
+		await importArchive(firstArchivePath);
+		expect(
+			db
+				.prepare(
+					`
+          select external_user_id, source, current
+          from follow_edges
+          where direction = 'followers'
+        `,
+				)
+				.all(),
+		).toEqual([{ external_user_id: "900", source: "xurl", current: 1 }]);
+
+		await importArchive(secondArchivePath);
+
+		expect(
+			db
+				.prepare(
+					`
+          select external_user_id, source, current
+          from follow_edges
+          where direction = 'followers'
+        `,
+				)
+				.all(),
+		).toEqual([{ external_user_id: "900", source: "xurl", current: 1 }]);
+		expect(
+			(
+				db
+					.prepare(
+						`
+            select count(*) as count
+            from follow_edges
+            where direction = 'followers' and source = 'archive'
+          `,
+					)
+					.get() as { count: number }
+			).count,
+		).toBe(0);
+	});
+
+	it("keeps live follow source on xurl edges absent from the archive", async () => {
+		const archivePath = makeFollowArchive({
+			followers: ["101"],
+			includeFollowing: false,
+		});
+		const homeDir = mkdtempSync(path.join(os.tmpdir(), "birdclaw-home-"));
+		createdDirs.push(homeDir);
+		process.env.BIRDCLAW_HOME = homeDir;
+		const db = getNativeDb();
+		db.prepare(
+			`
+      insert into follow_edges (
+        account_id, direction, profile_id, external_user_id, source, current,
+        first_seen_at, last_seen_at, ended_at, updated_at
+      ) values
+        ('acct_primary', 'followers', 'profile_user_101', '101', 'xurl', 1, '2026-05-01T00:00:00.000Z', '2026-05-01T00:00:00.000Z', null, '2026-05-01T00:00:00.000Z'),
+        ('acct_primary', 'followers', 'profile_user_900', '900', 'xurl', 1, '2026-05-01T00:00:00.000Z', '2026-05-01T00:00:00.000Z', null, '2026-05-01T00:00:00.000Z')
+      `,
+		).run();
+
+		await importArchive(archivePath);
+		const rows = db
+			.prepare(
+				`
+        select profile_id, source, current
+        from follow_edges
+        where direction = 'followers'
+        order by profile_id
+        `,
+			)
+			.all();
+		const events = db
+			.prepare("select external_user_id, kind from follow_events")
+			.all();
+
+		expect(rows).toEqual([
+			{ profile_id: "profile_user_101", source: "xurl", current: 1 },
+			{ profile_id: "profile_user_900", source: "xurl", current: 0 },
+		]);
+		expect(events).toEqual([{ external_user_id: "900", kind: "ended" }]);
+		expect(
+			listUnfollowedSince({ date: "2000-01-01" }).items.map(
+				(item) => item.profile.handle,
+			),
+		).toEqual(["id900"]);
+		expect(
+			listFollowEvents({
+				direction: "followers",
+				kind: "ended",
+				since: "2000-01-01",
+			}).items.map((item) => ({
+				kind: item.kind,
+				handle: item.profile.handle,
+			})),
+		).toEqual([{ kind: "ended", handle: "id900" }]);
+	});
 
 	it("covers parsing helpers and fallback normalizers", () => {
 		expect(__test__.normalizeArchivePath("data\\tweets.js")).toBe(

@@ -18,6 +18,11 @@ const RICH_USER_FIELDS =
 	"description,entities,location,public_metrics,profile_image_url,url,created_at,verified,verified_type";
 const THREAD_TWEET_FIELDS =
 	"created_at,conversation_id,entities,public_metrics,referenced_tweets,in_reply_to_user_id";
+// X bookmarks pagination truncates above 90 until this bug is fixed:
+// https://devcommunity.x.com/t/bookmarks-api-v2-stops-paginating-after-3-pages-no-next-token-returned/257339
+const BOOKMARKS_MAX_RESULTS_CAP = 90;
+
+type TimelineCollectionEndpoint = "liked_tweets" | "bookmarks";
 
 let transportStatusCache:
 	| {
@@ -107,6 +112,16 @@ function getRetryDelayMs(error: unknown, attempt: number) {
 
 	const baseDelay = getJsonRetryBaseDelayMs();
 	return Math.min(baseDelay * 2 ** attempt, 30_000);
+}
+
+function capTimelineCollectionMaxResults(
+	collection: TimelineCollectionEndpoint,
+	maxResults: number,
+	isPaginatedWalk: boolean,
+) {
+	return collection === "bookmarks" && isPaginatedWalk
+		? Math.min(maxResults, BOOKMARKS_MAX_RESULTS_CAP)
+		: maxResults;
 }
 
 async function sleep(ms: number) {
@@ -420,12 +435,14 @@ async function listTimelineCollectionViaXurl({
 	maxResults,
 	username,
 	userId,
+	isPaginatedWalk = false,
 	paginationToken,
 }: {
-	collection: "liked_tweets" | "bookmarks";
+	collection: TimelineCollectionEndpoint;
 	maxResults: number;
 	username?: string;
 	userId?: string;
+	isPaginatedWalk?: boolean;
 	paginationToken?: string;
 }): Promise<XurlMentionsResponse> {
 	let resolvedUserId = userId;
@@ -445,8 +462,13 @@ async function listTimelineCollectionViaXurl({
 		}
 	}
 
+	const requestMaxResults = capTimelineCollectionMaxResults(
+		collection,
+		maxResults,
+		isPaginatedWalk,
+	);
 	const query = new URLSearchParams({
-		max_results: String(maxResults),
+		max_results: String(requestMaxResults),
 		expansions: "author_id",
 		"tweet.fields":
 			"created_at,conversation_id,entities,public_metrics,referenced_tweets",
@@ -493,6 +515,7 @@ export async function listBookmarkedTweetsViaXurl(options: {
 	maxResults: number;
 	username?: string;
 	userId?: string;
+	isPaginatedWalk?: boolean;
 	paginationToken?: string;
 }): Promise<XurlMentionsResponse> {
 	return listTimelineCollectionViaXurl({

@@ -20,7 +20,7 @@ Status: WIP. Real and usable. Not done. Expect schema churn, transport gaps, and
 - one shared SQLite DB for multiple accounts, with canonical tweets/profiles and account-scoped timeline/collection edges
 - FTS5 search over tweets and DMs
 - archive autodiscovery on macOS
-- archive import for tweets, likes, profiles, and full DMs
+- archive import for tweets, likes, followers/following, profiles, and full DMs
 - archive import for bookmark exports when present
 - live likes and bookmarks sync through `xurl` or `bird`
 - cache-first followers/following sync through `bird` or `xurl`
@@ -209,11 +209,13 @@ pnpm cli search tweets --bookmarked --limit 20 --json
 
 ### Sync likes, bookmarks, home timeline, and mentions
 
-`auto` tries `xurl` first for likes/bookmarks, then falls back to `bird`. Use `bird` directly when the API path is unavailable for the account/token you have locally.
+`auto` tries `xurl` first for likes/bookmarks, then falls back to `bird`. Use `bird` directly when the API path is unavailable for the account/token you have locally. For repeated xurl collection syncs, add `--early-stop` to stop paging once a whole page already exists locally; without `--all` or `--max-pages`, it caps at 10 pages.
 
 ```bash
 pnpm cli sync likes --mode auto --limit 100 --refresh --json
 pnpm cli sync bookmarks --mode auto --limit 100 --refresh --json
+pnpm cli sync likes --mode auto --limit 100 --max-pages 5 --early-stop --refresh --json
+pnpm cli sync bookmarks --mode auto --limit 100 --max-pages 5 --early-stop --refresh --json
 pnpm cli sync bookmarks --mode bird --all --max-pages 5 --limit 100 --refresh --json
 pnpm cli sync timeline --limit 100 --refresh --json
 pnpm cli sync mentions --mode xurl --limit 100 --max-pages 3 --refresh --json

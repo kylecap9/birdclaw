@@ -217,6 +217,7 @@ birdclaw backup validate ~/Projects/birdclaw-store --json
 - validate archive
 - analyze contents
 - import selected slices
+- parse `data/follower.js` and `data/following.js` into the local follow graph
 - idempotent
 
 Flags:
@@ -236,7 +237,7 @@ Default:
 - update canonical tables
 - refresh cursors
 - refresh FTS incrementally
-- `sync likes` and `sync bookmarks` use cached live transport; `auto` tries `xurl`, then `bird`
+- `sync likes` and `sync bookmarks` use cached live transport; `auto` tries `xurl`, then `bird`; `--early-stop` caps at 10 pages unless paired with `--all` or `--max-pages`
 - `sync timeline` stores the live home timeline through `bird`; it defaults to the chronological Following feed
 - `sync mentions` ingests recent mentions through `xurl` (default) or `bird` and writes `kind='mention'` rows into the canonical store; this is the cron-friendly ingest path that replaces relying on `mentions export --refresh`
 - `sync mention-threads` fetches conversation context for recent mentions through `bird thread` or `xurl`; pass `--mode xurl` when the `bird` CLI is unavailable, otherwise use `--delay-ms` and `--timeout-ms` to stay gentle on live X
@@ -251,6 +252,7 @@ Common flags:
 - `--mode auto|xurl|bird`
 - `--all`
 - `--max-pages <n>`
+- `--early-stop` (on `sync likes` and `sync bookmarks`)
 - `--refresh`
 - `--cache-ttl <seconds>`
 
@@ -258,7 +260,9 @@ Examples:
 
 ```bash
 birdclaw sync likes --mode auto --limit 100 --refresh --json
+birdclaw sync likes --mode auto --limit 100 --max-pages 5 --early-stop --refresh --json
 birdclaw sync bookmarks --mode auto --limit 100 --refresh --json
+birdclaw sync bookmarks --mode auto --limit 100 --max-pages 5 --early-stop --refresh --json
 birdclaw sync bookmarks --mode bird --all --max-pages 5 --limit 100 --refresh --json
 birdclaw sync timeline --limit 100 --refresh --json
 birdclaw sync mentions --mode xurl --limit 100 --max-pages 3 --refresh --json

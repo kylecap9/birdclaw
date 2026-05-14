@@ -30,6 +30,48 @@ vi.mock("./xurl", () => ({
 
 const tempRoots: string[] = [];
 
+function makeTweet(id: string, text = id, authorId = "42") {
+	return {
+		id,
+		author_id: authorId,
+		text,
+		created_at: "2026-04-26T13:43:34.000Z",
+	};
+}
+
+function makeUser(id = "42", username = "sam") {
+	return { id, username, name: username };
+}
+
+function insertCollectionRow({
+	tweetId,
+	kind = "likes",
+	source = "archive",
+	updatedAt = "2026-01-01T00:00:00.000Z",
+}: {
+	tweetId: string;
+	kind?: "likes" | "bookmarks";
+	source?: string;
+	updatedAt?: string;
+}) {
+	getNativeDb()
+		.prepare(
+			`
+      insert into tweet_collections (
+        account_id, tweet_id, kind, collected_at, source, raw_json, updated_at
+      ) values (?, ?, ?, null, ?, ?, ?)
+      `,
+		)
+		.run(
+			"acct_primary",
+			tweetId,
+			kind,
+			source,
+			JSON.stringify({ id: tweetId }),
+			updatedAt,
+		);
+}
+
 function setupTempHome() {
 	const tempRoot = mkdtempSync(path.join(os.tmpdir(), "birdclaw-test-"));
 	tempRoots.push(tempRoot);
@@ -105,6 +147,47 @@ describe("live timeline collection sync", () => {
 			reply_to_id: "root_1",
 			quoted_tweet_id: "quote_1",
 		});
+	});
+
+	it("preserves authored tweet kind when a collection sync sees the same tweet", async () => {
+		setupTempHome();
+		getNativeDb()
+			.prepare(
+				`
+        insert into tweets (
+          id, account_id, author_profile_id, kind, text, created_at,
+          is_replied, like_count, media_count, bookmarked, liked,
+          entities_json, media_json
+        ) values (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, '{}', '[]')
+        `,
+			)
+			.run(
+				"authored_liked_1",
+				"acct_primary",
+				"profile_user_42",
+				"authored",
+				"authored before likes sync",
+				"2026-04-26T13:43:34.000Z",
+			);
+		mocks.listLikedTweetsViaXurl.mockResolvedValue({
+			data: [makeTweet("authored_liked_1", "same tweet via likes")],
+			includes: { users: [makeUser()] },
+			meta: { result_count: 1 },
+		});
+		const { syncTimelineCollection } =
+			await import("./timeline-collections-live");
+
+		await syncTimelineCollection({
+			kind: "likes",
+			mode: "xurl",
+			limit: 5,
+			refresh: true,
+		});
+		const row = getNativeDb()
+			.prepare("select kind from tweets where id = ?")
+			.get("authored_liked_1");
+
+		expect(row).toEqual({ kind: "authored" });
 	});
 
 	it("paginates xurl collections and deduplicates tweets and users", async () => {
@@ -188,6 +271,248 @@ describe("live timeline collection sync", () => {
 		).toHaveLength(2);
 	});
 
+	it("marks bookmark xurl walks as paginated for the max_results cap", async () => {
+		setupTempHome();
+		mocks.listBookmarkedTweetsViaXurl
+			.mockResolvedValueOnce({
+				data: [],
+				meta: { next_token: "next-page" },
+			})
+			.mockResolvedValueOnce({
+				data: [],
+				meta: {},
+			});
+		const { syncTimelineCollection } =
+			await import("./timeline-collections-live");
+
+		await syncTimelineCollection({
+			kind: "bookmarks",
+			mode: "xurl",
+			limit: 100,
+			all: true,
+			refresh: true,
+		});
+
+		expect(mocks.listBookmarkedTweetsViaXurl).toHaveBeenNthCalledWith(
+			1,
+			expect.objectContaining({
+				maxResults: 100,
+				isPaginatedWalk: true,
+			}),
+		);
+		expect(mocks.listBookmarkedTweetsViaXurl).toHaveBeenNthCalledWith(
+			2,
+			expect.objectContaining({
+				maxResults: 100,
+				isPaginatedWalk: true,
+				paginationToken: "next-page",
+			}),
+		);
+	});
+
+	it("stops xurl collection paging when a page is fully existing rows", async () => {
+		setupTempHome();
+		insertCollectionRow({ tweetId: "liked_existing" });
+		const consoleError = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
+		mocks.listLikedTweetsViaXurl.mockResolvedValue({
+			data: [makeTweet("liked_existing", "already local")],
+			includes: { users: [makeUser()] },
+			meta: { result_count: 1, next_token: "wasteful-next-page" },
+		});
+		const { syncTimelineCollection } =
+			await import("./timeline-collections-live");
+
+		const result = await syncTimelineCollection({
+			kind: "likes",
+			mode: "xurl",
+			limit: 5,
+			earlyStop: true,
+			refresh: true,
+		});
+
+		expect(result).toMatchObject({
+			ok: true,
+			source: "xurl",
+			count: 0,
+			saturated_at_page: 1,
+			payload: { meta: { page_count: 1, saturated_at_page: 1 } },
+		});
+		expect(mocks.listLikedTweetsViaXurl).toHaveBeenCalledTimes(1);
+		expect(consoleError).toHaveBeenCalledWith(
+			"likes saturated at page 1 (100% existing rows)",
+		);
+		consoleError.mockRestore();
+	});
+
+	it("does not early-stop on a partially deduped page", async () => {
+		setupTempHome();
+		insertCollectionRow({ tweetId: "liked_existing_partial" });
+		mocks.listLikedTweetsViaXurl
+			.mockResolvedValueOnce({
+				data: [
+					makeTweet("liked_existing_partial", "already local"),
+					makeTweet("liked_new_partial", "new on page one", "43"),
+				],
+				includes: { users: [makeUser(), makeUser("43", "jules")] },
+				meta: { result_count: 2, next_token: "next-page" },
+			})
+			.mockResolvedValueOnce({
+				data: [makeTweet("liked_new_second", "new on page two", "44")],
+				includes: { users: [makeUser("44", "mira")] },
+				meta: { result_count: 1 },
+			});
+		const { syncTimelineCollection } =
+			await import("./timeline-collections-live");
+
+		const result = await syncTimelineCollection({
+			kind: "likes",
+			mode: "xurl",
+			limit: 5,
+			earlyStop: true,
+			refresh: true,
+		});
+		const existing = getNativeDb()
+			.prepare(
+				"select source from tweet_collections where tweet_id = ? and kind = ?",
+			)
+			.get("liked_existing_partial", "likes");
+
+		expect(result).toMatchObject({
+			count: 2,
+			payload: { meta: { page_count: 2 } },
+		});
+		expect(result).not.toHaveProperty("saturated_at_page");
+		expect(mocks.listLikedTweetsViaXurl).toHaveBeenCalledTimes(2);
+		expect(existing).toEqual({ source: "archive" });
+	});
+
+	it("respects max-pages when early-stop never saturates", async () => {
+		setupTempHome();
+		mocks.listBookmarkedTweetsViaXurl
+			.mockResolvedValueOnce({
+				data: [makeTweet("bookmark_new_1", "new bookmark one")],
+				includes: { users: [makeUser()] },
+				meta: { result_count: 1, next_token: "page-2" },
+			})
+			.mockResolvedValueOnce({
+				data: [makeTweet("bookmark_new_2", "new bookmark two", "43")],
+				includes: { users: [makeUser("43", "jules")] },
+				meta: { result_count: 1, next_token: "page-3" },
+			});
+		const { syncTimelineCollection } =
+			await import("./timeline-collections-live");
+
+		const result = await syncTimelineCollection({
+			kind: "bookmarks",
+			mode: "xurl",
+			limit: 5,
+			maxPages: 2,
+			earlyStop: true,
+			refresh: true,
+		});
+
+		expect(result).toMatchObject({
+			count: 2,
+			payload: { meta: { page_count: 2 } },
+		});
+		expect(result).not.toHaveProperty("saturated_at_page");
+		expect(mocks.listBookmarkedTweetsViaXurl).toHaveBeenCalledTimes(2);
+	});
+
+	it("caps early-stop pagination when max-pages is omitted", async () => {
+		setupTempHome();
+		const consoleError = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
+		for (let page = 1; page <= 10; page += 1) {
+			mocks.listLikedTweetsViaXurl.mockResolvedValueOnce({
+				data: [makeTweet(`liked_capped_${page}`, `capped page ${page}`)],
+				meta: { result_count: 1, next_token: `page-${page + 1}` },
+			});
+		}
+		const { syncTimelineCollection } =
+			await import("./timeline-collections-live");
+
+		const result = await syncTimelineCollection({
+			kind: "likes",
+			mode: "xurl",
+			limit: 5,
+			earlyStop: true,
+			refresh: true,
+		});
+
+		expect(result).toMatchObject({
+			count: 10,
+			payload: { meta: { page_count: 10 } },
+		});
+		expect(result).not.toHaveProperty("saturated_at_page");
+		expect(mocks.listLikedTweetsViaXurl).toHaveBeenCalledTimes(10);
+		expect(mocks.listLikedTweetsViaXurl).toHaveBeenLastCalledWith(
+			expect.objectContaining({ paginationToken: "page-10" }),
+		);
+		expect(consoleError).toHaveBeenCalledWith(
+			"likes early-stop capped at 10 pages by default; pass --max-pages or --all to override",
+		);
+		consoleError.mockRestore();
+	});
+
+	it("keeps an early-stop rerun idempotent for existing collection rows", async () => {
+		setupTempHome();
+		const consoleError = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
+		mocks.listLikedTweetsViaXurl.mockResolvedValueOnce({
+			data: [makeTweet("liked_rerun", "first sync")],
+			includes: { users: [makeUser()] },
+			meta: { result_count: 1 },
+		});
+		const { syncTimelineCollection } =
+			await import("./timeline-collections-live");
+
+		await syncTimelineCollection({
+			kind: "likes",
+			mode: "xurl",
+			limit: 5,
+			earlyStop: true,
+			refresh: true,
+		});
+		getNativeDb()
+			.prepare(
+				"update tweet_collections set source = ?, updated_at = ? where tweet_id = ? and kind = ?",
+			)
+			.run("archive", "2026-01-01T00:00:00.000Z", "liked_rerun", "likes");
+		const before = getNativeDb()
+			.prepare(
+				"select source, updated_at from tweet_collections where tweet_id = ? and kind = ?",
+			)
+			.get("liked_rerun", "likes");
+		mocks.listLikedTweetsViaXurl.mockResolvedValueOnce({
+			data: [makeTweet("liked_rerun", "second sync")],
+			includes: { users: [makeUser()] },
+			meta: { result_count: 1, next_token: "unused" },
+		});
+
+		const second = await syncTimelineCollection({
+			kind: "likes",
+			mode: "xurl",
+			limit: 5,
+			earlyStop: true,
+			refresh: true,
+		});
+		const after = getNativeDb()
+			.prepare(
+				"select source, updated_at from tweet_collections where tweet_id = ? and kind = ?",
+			)
+			.get("liked_rerun", "likes");
+
+		expect(second).toMatchObject({ count: 0, saturated_at_page: 1 });
+		expect(after).toEqual(before);
+		expect(mocks.listLikedTweetsViaXurl).toHaveBeenCalledTimes(2);
+		consoleError.mockRestore();
+	});
+
 	it("falls back to bird for bookmarks when xurl fails", async () => {
 		setupTempHome();
 		mocks.lookupUsersByHandles.mockResolvedValue([{ id: "25401953" }]);
@@ -237,6 +562,39 @@ describe("live timeline collection sync", () => {
 			liked: false,
 			author: { handle: "amelia" },
 		});
+	});
+
+	it("does not pass the implicit early-stop cap to bird fallback", async () => {
+		setupTempHome();
+		const consoleError = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
+		mocks.listBookmarkedTweetsViaXurl.mockRejectedValue(new Error("xurl down"));
+		mocks.listBookmarkedTweetsViaBird.mockResolvedValue({
+			data: [makeTweet("bookmark_bird_fallback", "bird fallback", "43")],
+			includes: {
+				users: [{ id: "43", username: "amelia", name: "Amelia" }],
+			},
+			meta: { result_count: 1 },
+		});
+		const { syncTimelineCollection } =
+			await import("./timeline-collections-live");
+
+		const result = await syncTimelineCollection({
+			kind: "bookmarks",
+			mode: "auto",
+			limit: 5,
+			earlyStop: true,
+			refresh: true,
+		});
+
+		expect(result).toMatchObject({ ok: true, source: "bird", count: 1 });
+		expect(mocks.listBookmarkedTweetsViaBird).toHaveBeenCalledWith({
+			maxResults: 5,
+			all: false,
+			maxPages: undefined,
+		});
+		consoleError.mockRestore();
 	});
 
 	it("keeps live saved-state scoped to the syncing account", async () => {

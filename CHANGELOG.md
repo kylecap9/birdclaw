@@ -5,12 +5,14 @@
 ### Added
 
 - Add a `/links` web lane for Hacker News-style top URL and video-provider insights with today, week, month, year, and all-time ranges.
+- Import archive `follower.js`/`following.js` files into the local follow graph and add archive-authored tweet edges so fresh archive imports are immediately queryable without live sync. Thanks @cavit99.
 - Add cache-first followers/following sync, local follow graph queries, and backup/export support for graph snapshots and churn events. Thanks @ma08.
 - Hydrate missing link-discussion profile avatars through `bird`/`xurl` so hover sheets can upgrade archive placeholders into real profile cards.
 - Add inline tweet conversation expansion in the web timeline, preserving the selected reply's parent chain before broad thread context.
 
 ### Fixed
 
+- Skip non-numeric archive placeholder IDs such as self-DM conversation IDs when hydrating profiles through X, so one malformed local ID no longer aborts the batch. Thanks @nfarina.
 - Include expanded short URLs and link occurrences in Git-friendly backups so linked-tweet search survives backup restore.
 - Prefer `bird` for follow graph sync in `auto` mode, keeping `xurl` as an explicit fallback for accounts where OAuth2 follow reads work.
 - Update the docs site and app icons to use the Birdclaw crab-bird mark instead of the generic bird logo.
