@@ -17,6 +17,7 @@ import type {
 	PeriodDigestRunResult,
 	PeriodDigestStreamEvent,
 } from "#/lib/period-digest";
+import type { ProfileRecord } from "#/lib/types";
 import {
 	cx,
 	errorCopyClass,
@@ -37,6 +38,14 @@ export const Route = createFileRoute("/today")({
 });
 
 type PeriodOption = "today" | "24h" | "yesterday" | "week";
+type HydrateProfileResult = {
+	handle: string;
+	status: "hit" | "miss" | "error";
+	profile?: ProfileRecord;
+};
+
+const PROFILE_HYDRATION_LIMIT = 12;
+const PROFILE_HYDRATION_DELAY_MS = 300;
 
 const periods: Array<{ value: PeriodOption; label: string }> = [
 	{ value: "today", label: "Today" },
@@ -97,6 +106,59 @@ function formatCounts(result: PeriodDigestRunResult | null) {
 		.join(" · ");
 }
 
+function normalizeHandle(value: string) {
+	return value.trim().replace(/^@/, "").toLowerCase();
+}
+
+function collectProfilesForHydration(result: PeriodDigestRunResult) {
+	const handles = new Set<string>();
+	for (const tweet of pickHighlightTweets(result)) {
+		const handle = normalizeHandle(tweet.author);
+		if (handle) handles.add(handle);
+		if (handles.size >= PROFILE_HYDRATION_LIMIT) return [...handles];
+	}
+	for (const person of result.digest.people) {
+		const handle = normalizeHandle(person.handle);
+		if (handle) handles.add(handle);
+		if (handles.size >= PROFILE_HYDRATION_LIMIT) break;
+	}
+	return [...handles];
+}
+
+function applyHydratedProfilesToContext(
+	context: PeriodDigestContext,
+	profilesByHandle: Map<string, ProfileRecord>,
+) {
+	let changed = false;
+	const tweets = context.tweets.map((tweet) => {
+		const profile = profilesByHandle.get(normalizeHandle(tweet.author));
+		if (!profile || profile === tweet.authorProfile) return tweet;
+		changed = true;
+		return {
+			...tweet,
+			author: profile.handle,
+			name: profile.displayName,
+			authorProfile: profile,
+		};
+	});
+	return changed ? { ...context, tweets } : context;
+}
+
+function applyHydratedProfilesToResult(
+	result: PeriodDigestRunResult,
+	profiles: ProfileRecord[],
+) {
+	const profilesByHandle = new Map(
+		profiles.map((profile) => [normalizeHandle(profile.handle), profile]),
+	);
+	if (profilesByHandle.size === 0) return result;
+	const context = applyHydratedProfilesToContext(
+		result.context,
+		profilesByHandle,
+	);
+	return context === result.context ? result : { ...result, context };
+}
+
 function useDigestStream(period: PeriodOption, includeDms: boolean) {
 	const [markdown, setMarkdown] = useState("");
 	const [context, setContext] = useState<PeriodDigestContext | null>(null);
@@ -105,6 +167,8 @@ function useDigestStream(period: PeriodOption, includeDms: boolean) {
 	const [loading, setLoading] = useState(false);
 	const abortRef = useRef<AbortController | null>(null);
 	const requestIdRef = useRef(0);
+	const hydratedHandlesRef = useRef(new Set<string>());
+	const hydratedProfilesRef = useRef(new Map<string, ProfileRecord>());
 
 	const run = useCallback(
 		(refresh = false) => {
@@ -183,6 +247,90 @@ function useDigestStream(period: PeriodOption, includeDms: boolean) {
 		run(false);
 		return () => abortRef.current?.abort();
 	}, [run]);
+
+	useEffect(() => {
+		if (!result) return;
+		if (hydratedProfilesRef.current.size > 0) {
+			const cachedProfiles = [...hydratedProfilesRef.current.values()];
+			setResult((current) =>
+				current
+					? applyHydratedProfilesToResult(current, cachedProfiles)
+					: current,
+			);
+			setContext((current) =>
+				current
+					? applyHydratedProfilesToContext(current, hydratedProfilesRef.current)
+					: current,
+			);
+		}
+		const handles = collectProfilesForHydration(result).filter(
+			(handle) => !hydratedHandlesRef.current.has(handle),
+		);
+		if (handles.length === 0) return;
+
+		const controller = new AbortController();
+		const url = new URL("/api/profile-hydrate", window.location.origin);
+		url.searchParams.set("handles", handles.join(","));
+
+		let idleId: number | null = null;
+		const runHydration = () => {
+			fetch(url, { signal: controller.signal })
+				.then((response) => response.json())
+				.then((response: { results?: HydrateProfileResult[] }) => {
+					for (const handle of handles) hydratedHandlesRef.current.add(handle);
+					const profiles =
+						response.results
+							?.map((item) => item.profile)
+							.filter((profile): profile is ProfileRecord =>
+								Boolean(profile),
+							) ?? [];
+					if (profiles.length === 0) return;
+					for (const profile of profiles) {
+						hydratedProfilesRef.current.set(
+							normalizeHandle(profile.handle),
+							profile,
+						);
+					}
+					setResult((current) =>
+						current
+							? applyHydratedProfilesToResult(current, profiles)
+							: current,
+					);
+					const profilesByHandle = new Map(
+						profiles.map((profile) => [
+							normalizeHandle(profile.handle),
+							profile,
+						]),
+					);
+					setContext((current) =>
+						current
+							? applyHydratedProfilesToContext(current, profilesByHandle)
+							: current,
+					);
+				})
+				.catch((error: unknown) => {
+					if (error instanceof DOMException && error.name === "AbortError") {
+						return;
+					}
+					console.warn("Profile hydration failed", error);
+				});
+		};
+		const timer = window.setTimeout(() => {
+			if ("requestIdleCallback" in window) {
+				idleId = window.requestIdleCallback(runHydration, { timeout: 2500 });
+			} else {
+				runHydration();
+			}
+		}, PROFILE_HYDRATION_DELAY_MS);
+
+		return () => {
+			controller.abort();
+			window.clearTimeout(timer);
+			if (idleId !== null && "cancelIdleCallback" in window) {
+				window.cancelIdleCallback(idleId);
+			}
+		};
+	}, [result]);
 
 	return { context, error, loading, markdown, result, run };
 }

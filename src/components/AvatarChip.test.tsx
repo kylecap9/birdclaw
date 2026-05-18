@@ -26,7 +26,10 @@ describe("AvatarChip", () => {
 		);
 
 		const image = screen.getByRole("img", { name: "Sam Altman" });
-		expect(image).toHaveAttribute("src", "/api/avatar?profileId=profile_sam");
+		expect(image).toHaveAttribute(
+			"src",
+			expect.stringContaining("/api/avatar?profileId=profile_sam&v="),
+		);
 	});
 
 	it("falls back to initials when avatar loading fails", () => {

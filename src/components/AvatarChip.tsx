@@ -21,9 +21,7 @@ export function AvatarChip({
 	size?: "default" | "large" | "small";
 }) {
 	const avatarSrc =
-		profileId && avatarUrl
-			? `/api/avatar?profileId=${encodeURIComponent(profileId)}`
-			: null;
+		profileId && avatarUrl ? avatarPath(profileId, avatarUrl) : null;
 	const [failedSrc, setFailedSrc] = useState<string | null>(null);
 	const showImage = avatarSrc && failedSrc !== avatarSrc;
 
@@ -49,4 +47,12 @@ export function AvatarChip({
 			)}
 		</span>
 	);
+}
+
+function avatarPath(profileId: string, avatarUrl: string) {
+	const query = new URLSearchParams({
+		profileId,
+		v: avatarUrl,
+	});
+	return `/api/avatar?${query.toString()}`;
 }

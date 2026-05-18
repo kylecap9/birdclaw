@@ -178,7 +178,7 @@ describe("TimelineCard", () => {
 		expect(screen.getByText("Sam Altman reposted")).toBeInTheDocument();
 		expect(screen.getAllByAltText("Ava")[0]).toHaveAttribute(
 			"src",
-			"/api/avatar?profileId=profile_3",
+			expect.stringContaining("/api/avatar?profileId=profile_3&v="),
 		);
 		expect(screen.getByText("Original app idea")).toBeInTheDocument();
 		expect(screen.getAllByText("@ava").length).toBeGreaterThan(0);

@@ -22,6 +22,12 @@ const authorProfile = {
 	createdAt: "2020-01-01T00:00:00.000Z",
 };
 
+const hydratedAuthorProfile = {
+	...authorProfile,
+	displayName: "Alice Fresh",
+	avatarUrl: "https://pbs.twimg.com/profile_images/alice/avatar.jpg",
+};
+
 function digestResult(label: string, markdown: string, includeDms = false) {
 	return {
 		context: {
@@ -124,6 +130,22 @@ describe("today route", () => {
 		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
 			const url = new URL(String(input));
 			urls.push(url);
+			if (url.pathname === "/api/profile-hydrate") {
+				return new Response(
+					JSON.stringify({
+						ok: true,
+						results: [
+							{
+								handle: "alice",
+								status: "hit",
+								source: "bird",
+								profile: hydratedAuthorProfile,
+							},
+						],
+					}),
+					{ headers: { "content-type": "application/json" } },
+				);
+			}
 			const period = url.searchParams.get("period") ?? "today";
 			const includeDms = url.searchParams.get("includeDms") === "true";
 			const label = period === "week" ? "Last 7 days" : "Today";
@@ -160,6 +182,15 @@ describe("today route", () => {
 		expect(
 			screen.getByText("3 home · 2 mentions · 4 links"),
 		).toBeInTheDocument();
+		await waitFor(() =>
+			expect(screen.getAllByText("Alice Fresh").length).toBeGreaterThan(0),
+		);
+		expect(
+			screen.getAllByRole("img", { name: "Alice Fresh" })[0],
+		).toHaveAttribute(
+			"src",
+			expect.stringContaining("/api/avatar?profileId=profile_alice&v="),
+		);
 
 		fireEvent.click(screen.getByRole("button", { name: "Week" }));
 		expect(await screen.findByText("Last 7 days summary")).toBeInTheDocument();
