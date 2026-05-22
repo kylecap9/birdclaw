@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, type ReactNode, useState } from "react";
 import { formatCompactNumber, formatShortTimestamp } from "#/lib/present";
 import type { PeriodDigestContext } from "#/lib/period-digest";
 import type { ProfileRecord } from "#/lib/types";
@@ -70,17 +70,39 @@ function TweetPreviewToken({
 	tweet: PeriodDigestContext["tweets"][number];
 	children: ReactNode;
 }) {
+	const [open, setOpen] = useState(false);
+
+	function closePreview() {
+		setOpen(false);
+	}
+
 	return (
-		<span className="group/digest-tweet relative inline-flex align-baseline">
+		<span
+			className="relative inline align-baseline"
+			onBlur={closePreview}
+			onFocus={() => setOpen(true)}
+			onPointerEnter={() => setOpen(true)}
+			onPointerLeave={closePreview}
+		>
 			<a
-				className="rounded-sm px-0.5 font-mono text-[0.9em] text-[var(--accent)] hover:bg-[var(--accent-soft)] hover:no-underline"
+				className="rounded-sm px-0.5 text-[var(--accent)] hover:bg-[var(--accent-soft)] hover:no-underline"
 				href={getTweetUrl(tweet)}
+				onClick={(event) => {
+					closePreview();
+					event.currentTarget.blur();
+				}}
 				rel="noreferrer"
 				target="_blank"
 			>
 				{children}
 			</a>
-			<span className="absolute left-1/2 top-[calc(100%+10px)] z-40 hidden w-[360px] -translate-x-1/2 rounded-2xl border border-[var(--line)] bg-[var(--bg-elevated)] p-3 text-left text-[14px] leading-[1.4] text-[var(--ink)] shadow-[0_14px_40px_var(--shadow-strong)] group-hover/digest-tweet:block group-focus-within/digest-tweet:block">
+			<span
+				aria-hidden={!open}
+				className={cx(
+					"absolute left-1/2 top-[calc(100%+10px)] z-40 w-[360px] -translate-x-1/2 rounded-2xl border border-[var(--line)] bg-[var(--bg-elevated)] p-3 text-left text-[14px] leading-[1.4] text-[var(--ink)] shadow-[0_14px_40px_var(--shadow-strong)]",
+					open ? "block" : "hidden",
+				)}
+			>
 				<span className="mb-2 flex items-center gap-2">
 					<AvatarChip
 						avatarUrl={tweet.authorProfile.avatarUrl}

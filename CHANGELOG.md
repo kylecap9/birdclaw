@@ -17,6 +17,7 @@
 
 ### Fixed
 
+- Close Today tweet hover previews when opening their source links so command-clicked citations cannot leave stale preview cards stacked on later hovers.
 - Keep the Messages shell aligned with the rest of the app while collapsing the sidebar labels, and label optional follower/score DM filters instead of showing default `0` fields.
 - Link grouped AI digest tweet citations to nearby readable text instead of showing raw `tweet_...` IDs.
 - Expand the Messages web layout into an icon-rail workspace so the DM list and thread panes no longer squeeze into the standard feed width.

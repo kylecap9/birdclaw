@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PeriodDigestContext } from "#/lib/period-digest";
 import { MarkdownViewer } from "./MarkdownViewer";
@@ -112,6 +112,11 @@ describe("MarkdownViewer", () => {
 			"href",
 			"https://x.com/ChainZenit/status/2056286865875935400",
 		);
+		expect(
+			screen.getByRole("link", {
+				name: "“autonomous agents running on goAT”",
+			}),
+		).not.toHaveClass("font-mono");
 	});
 
 	it("links comma-separated tweet citations to nearby readable text", () => {
@@ -183,5 +188,33 @@ describe("MarkdownViewer", () => {
 		expect(
 			screen.queryByText(/tweet_2057574939775938900/),
 		).not.toBeInTheDocument();
+	});
+
+	it("closes a tweet preview after opening the tweet link", () => {
+		render(
+			<MarkdownViewer
+				context={context}
+				markdown={
+					"ChainZenit reacted positively to “autonomous agents running on goAT” (tweet_2056286865875935400)."
+				}
+			/>,
+		);
+
+		const link = screen.getByRole("link", {
+			name: "“autonomous agents running on goAT”",
+		});
+		const wrapper = link.parentElement;
+		const preview = screen
+			.getByText(context.tweets[0].text)
+			.closest("[aria-hidden]");
+
+		expect(preview).toHaveAttribute("aria-hidden", "true");
+		expect(wrapper).not.toBeNull();
+
+		fireEvent.pointerEnter(wrapper as Element);
+		expect(preview).toHaveAttribute("aria-hidden", "false");
+
+		fireEvent.click(link, { metaKey: true });
+		expect(preview).toHaveAttribute("aria-hidden", "true");
 	});
 });
