@@ -484,9 +484,7 @@ function renderInline(text: string, lookup: InlineLookup) {
 					<a
 						key={tokenKey}
 						className={tweetMentionClass}
-						href={`https://x.com/${token.slice(1)}`}
-						rel="noreferrer"
-						target="_blank"
+						href={`/profiles/${encodeURIComponent(token.slice(1))}`}
 					>
 						{token}
 					</a>

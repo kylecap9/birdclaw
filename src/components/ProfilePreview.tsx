@@ -7,7 +7,7 @@ import {
 } from "react";
 import { formatCompactNumber } from "#/lib/present";
 import {
-	collectTweetSegments,
+	collectTweetSegmentsForText,
 	profileDescriptionEntitiesFromXurl,
 } from "#/lib/tweet-render";
 import type { ProfileRecord } from "#/lib/types";
@@ -46,7 +46,8 @@ function nearestVerticalClipBounds(element: HTMLElement): VerticalBounds {
 }
 
 function ProfilePreviewBio({ profile }: { profile: ProfileRecord }) {
-	const segments = collectTweetSegments(
+	const segments = collectTweetSegmentsForText(
+		profile.bio,
 		profileDescriptionEntitiesFromXurl(profile.entities),
 	);
 	let cursor = 0;
@@ -133,9 +134,7 @@ export function ProfilePreview({
 		>
 			<a
 				className={profilePreviewTriggerClass}
-				href={`https://x.com/${profile.handle}`}
-				rel="noreferrer"
-				target="_blank"
+				href={`/profiles/${encodeURIComponent(profile.handle)}`}
 			>
 				{children}
 			</a>

@@ -1,8 +1,9 @@
 import { Fragment } from "react";
 import type { ReactNode } from "react";
 import {
-	collectTweetSegments,
+	collectTweetSegmentsForText,
 	enrichFallbackUrlEntities,
+	normalizeTweetUrlEntityRangeForText,
 } from "#/lib/tweet-render";
 import type { TweetEntities } from "#/lib/types";
 import {
@@ -13,6 +14,10 @@ import {
 } from "#/lib/ui";
 import { safeHttpUrl } from "#/lib/url-safety";
 import { ProfilePreview } from "./ProfilePreview";
+
+function rangeKey(range: { start: number; end: number }) {
+	return `${range.start}:${range.end}`;
+}
 
 export function TweetRichText({
 	text,
@@ -30,7 +35,15 @@ export function TweetRichText({
 	as?: "p" | "span";
 }) {
 	const richEntities = enrichFallbackUrlEntities(text, entities);
-	const segments = collectTweetSegments(richEntities);
+	const segments = collectTweetSegmentsForText(text, richEntities);
+	const hiddenRawRangeKeys = new Set(hiddenUrlRanges.map(rangeKey));
+	const hiddenRangeKeys = new Set(hiddenRawRangeKeys);
+	for (const entry of richEntities.urls ?? []) {
+		if (!hiddenRawRangeKeys.has(rangeKey(entry))) continue;
+		hiddenRangeKeys.add(
+			rangeKey(normalizeTweetUrlEntityRangeForText(text, entry)),
+		);
+	}
 	const Wrapper = as;
 	let cursor = 0;
 
@@ -53,13 +66,7 @@ export function TweetRichText({
 						{text.slice(segment.start, segment.end)}
 					</Fragment>
 				);
-				if (
-					segment.kind === "url" &&
-					hiddenUrlRanges.some(
-						(range) =>
-							range.start === segment.start && range.end === segment.end,
-					)
-				) {
+				if (segment.kind === "url" && hiddenRangeKeys.has(rangeKey(segment))) {
 					node = null;
 				} else if (segment.kind === "mention" && segment.profile) {
 					node = (
@@ -75,9 +82,7 @@ export function TweetRichText({
 						<a
 							key={`segment-${String(index)}`}
 							className={tweetMentionClass}
-							href={`https://x.com/${segment.username}`}
-							rel="noreferrer"
-							target="_blank"
+							href={`/profiles/${encodeURIComponent(segment.username)}`}
 						>
 							@{segment.username}
 						</a>

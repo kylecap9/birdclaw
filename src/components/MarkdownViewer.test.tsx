@@ -487,11 +487,11 @@ describe("MarkdownViewer", () => {
 
 		expect(screen.getByRole("link", { name: "@OpenAI" })).toHaveAttribute(
 			"href",
-			"https://x.com/OpenAI",
+			"/profiles/OpenAI",
 		);
 		expect(screen.getByRole("link", { name: "@openclaw" })).toHaveAttribute(
 			"href",
-			"https://x.com/openclaw",
+			"/profiles/openclaw",
 		);
 		expect(screen.getByText("AI research and products.")).toBeInTheDocument();
 		expect(screen.getByText("Agent tooling")).toBeInTheDocument();

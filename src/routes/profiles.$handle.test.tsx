@@ -181,23 +181,23 @@ describe("profile route", () => {
 		).toHaveAttribute("href", "https://huggingface.co/NousResearch");
 		expect(screen.getByRole("link", { name: "@openclaw" })).toHaveAttribute(
 			"href",
-			"https://x.com/openclaw",
+			"/profiles/openclaw",
 		);
 		expect(screen.getByRole("link", { name: "@forbes" })).toHaveAttribute(
 			"href",
-			"https://x.com/forbes",
+			"/profiles/forbes",
 		);
 		expect(screen.getByRole("link", { name: "@MIT" })).toHaveAttribute(
 			"href",
-			"https://x.com/MIT",
+			"/profiles/MIT",
 		);
 		expect(screen.getByRole("link", { name: "@Microsoft" })).toHaveAttribute(
 			"href",
-			"https://x.com/Microsoft",
+			"/profiles/Microsoft",
 		);
 		expect(screen.getByRole("link", { name: "@Qantas" })).toHaveAttribute(
 			"href",
-			"https://x.com/Qantas",
+			"/profiles/Qantas",
 		);
 		expect(await screen.findByText("Agent tooling.")).toBeInTheDocument();
 		expect(screen.getByText("Business news.")).toBeInTheDocument();
