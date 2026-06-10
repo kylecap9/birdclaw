@@ -27,34 +27,20 @@ birdclaw [global flags] <subcommand> [args]
 - `-h, --help`
 - `--version`
 - `--json`
-- `--plain`
-- `-q, --quiet`
-- `-v, --verbose`
-- `--no-color`
-- `--no-input`
-- `--config <path>`
-- `--profile <name>`
-- `--db <path>`
 
 ## Config precedence
 
-Flags > env > project config > user config
+Command flags > environment overrides > user config
 
 User config:
 
 - `~/.birdclaw/config.json`
 
-Project config:
-
-- `./.birdclawrc.json5`
-
 ## Env vars
 
-- `BIRDCLAW_DB`
-- `BIRDCLAW_PROFILE`
-- `BIRDCLAW_TRANSPORT`
-- `BIRDCLAW_LOG`
-- `NO_COLOR`
+- `BIRDCLAW_HOME`
+- `BIRDCLAW_CONFIG`
+- `BIRDCLAW_ACTIONS_TRANSPORT`
 
 ## Command tree
 
@@ -121,13 +107,15 @@ birdclaw debug transport
 - uses `gpt-5.5`, medium reasoning, and priority service tier by default
 - requires `OPENAI_API_KEY`
 - excludes DMs unless `--include-dms` is passed
-- supports `--refresh`, `--model`, `--max-tweets`, and `--max-links`
+- supports `--refresh`, `--model`, `--language <locale-id>`, `--max-tweets`, and `--max-links`
+- reads the default report language from `BIRDCLAW_DIGEST_LANGUAGE`
 
 ### `digest [period]`
 
 - period: `today`, `24h`, `yesterday`, or `week`
 - accepts explicit `--since <iso>` and `--until <iso>` windows
-- caches the final structured result by local context hash, model, reasoning effort, and service tier
+- caches the final structured result by local context hash, model, reasoning effort, service tier, and canonical report language
+- accepts the same language tag through `GET /api/period-digest?language=zh-CN`
 - `--json` suppresses token streaming and emits the final envelope
 
 ### `init`

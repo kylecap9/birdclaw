@@ -219,6 +219,8 @@ birdclaw auth status --json
 birdclaw db stats --json
 ```
 
+`auth status` reports Birdclaw's coarse xurl status. Verify xurl with `xurl whoami` and bird with `bird whoami`. For setup and transport selection, see [Sign in](docs/auth.md).
+
 Find and import an archive:
 
 ```bash
@@ -226,6 +228,8 @@ birdclaw archive find --json
 birdclaw import archive --json
 birdclaw import archive ~/Downloads/twitter-archive-2025.zip --json
 ```
+
+Don't have an archive yet? Request it from <https://x.com/settings/download_your_data>; X emails a download link when it is ready, which may take a few days. A fresh Birdclaw database needs the archive import to establish account identity before live sync. See [Archive Import → Get an archive](docs/archive.md#get-an-archive).
 
 Optional profile hydration can improve bios, follower counts, and avatars, but it performs live X profile reads and can spend API credits on large archives:
 
@@ -414,17 +418,18 @@ birdclaw profile-analyse openai --max-pages 20 --max-conversations 40 --conversa
 
 ### What happened today
 
-`birdclaw today` streams a local "what happened" digest from the SQLite store. It uses the OpenAI Responses API with `gpt-5.5`, medium reasoning, and priority service tier by default. Set `OPENAI_API_KEY`; override with `BIRDCLAW_AI_MODEL`, `BIRDCLAW_OPENAI_REASONING_EFFORT`, or `BIRDCLAW_OPENAI_SERVICE_TIER` when needed.
+`birdclaw today` streams a local "what happened" digest from the SQLite store. It uses the OpenAI Responses API with `gpt-5.5`, medium reasoning, and priority service tier by default. Set `OPENAI_API_KEY`; override with `BIRDCLAW_AI_MODEL`, `BIRDCLAW_OPENAI_REASONING_EFFORT`, or `BIRDCLAW_OPENAI_SERVICE_TIER` when needed. Use `--language <locale-id>` or `BIRDCLAW_DIGEST_LANGUAGE` for localized reports.
 
 ```bash
 birdclaw today
+birdclaw today --language zh-CN
 birdclaw digest 24h --refresh
 birdclaw digest week --json
 birdclaw digest --since 2026-05-16T00:00:00Z --until 2026-05-17T00:00:00Z
 birdclaw digest today --include-dms
 ```
 
-The web UI exposes the same stream under `What happened`. DMs are excluded unless explicitly enabled. Final structured results are cached by the exact local context hash, model, reasoning effort, and service tier.
+The web UI exposes the same stream under `What happened`. DMs are excluded unless explicitly enabled. Final structured results are cached by the exact local context hash, model, reasoning effort, service tier, and report language.
 
 ### Search and triage DMs
 
