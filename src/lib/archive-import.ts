@@ -16,7 +16,7 @@ import { getBirdclawPaths } from "./config";
 import { getNativeDb } from "./db";
 import { runEffectPromise, tryPromise } from "./effect-runtime";
 import {
-	ingestStreamInBatchesEffect,
+	ingestSourcesInBatchesEffect,
 	streamAssignedJsonArray,
 } from "./streaming-ingestion";
 import { safeHttpUrl } from "./url-safety";
@@ -245,8 +245,13 @@ function processArchiveEntryRecordsEffect(
 	entryPath: string,
 	processRecord: (record: ArchiveRecord) => void,
 ) {
-	return ingestStreamInBatchesEffect({
-		source: () => streamArchiveArrayRecords(archivePath, entryPath),
+	return ingestSourcesInBatchesEffect({
+		sources: [
+			{
+				id: entryPath,
+				stream: () => streamArchiveArrayRecords(archivePath, entryPath),
+			},
+		],
 		processBatch: (batch) => {
 			for (const record of batch) processRecord(record);
 		},

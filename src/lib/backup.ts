@@ -10,7 +10,7 @@ import { getBirdclawConfig } from "./config";
 import { getNativeDb } from "./db";
 import { runEffectPromise, tryPromise } from "./effect-runtime";
 import {
-	ingestStreamInBatchesEffect,
+	collectIngestionSourcesEffect,
 	streamJsonLines,
 } from "./streaming-ingestion";
 import { safeHttpUrl } from "./url-safety";
@@ -1256,41 +1256,35 @@ function assertNoSymlinkAncestorEffect(
 	});
 }
 
-function readJsonlFileEffect(
-	repoPath: string,
-	relativePath: string,
-): Effect.Effect<JsonRecord[], unknown> {
-	return Effect.gen(function* () {
-		const filePath = yield* trySync(() =>
-			resolveBackupFilePath(repoPath, relativePath),
-		);
-		yield* assertReadableBackupFileEffect(repoPath, filePath, relativePath);
-		const rows: JsonRecord[] = [];
-		yield* ingestStreamInBatchesEffect({
-			source: async function* () {
-				for await (const row of streamJsonLines(filePath)) {
-					yield row.value as JsonRecord;
-				}
-			},
-			processBatch: (batch) => {
-				rows.push(...batch);
-			},
-		});
-		return rows;
-	});
-}
-
 function readJsonlFilesEffect(
 	repoPath: string,
 	relativePaths: string[],
 ): Effect.Effect<JsonRecord[], unknown> {
 	return Effect.gen(function* () {
-		const nestedRows = yield* Effect.forEach(
+		const sources = yield* Effect.forEach(
 			relativePaths,
-			(relativePath) => readJsonlFileEffect(repoPath, relativePath),
+			(relativePath) =>
+				Effect.gen(function* () {
+					const filePath = yield* trySync(() =>
+						resolveBackupFilePath(repoPath, relativePath),
+					);
+					yield* assertReadableBackupFileEffect(
+						repoPath,
+						filePath,
+						relativePath,
+					);
+					return {
+						id: relativePath,
+						stream: async function* () {
+							for await (const row of streamJsonLines(filePath)) {
+								yield row.value as JsonRecord;
+							}
+						},
+					};
+				}),
 			{ concurrency: "unbounded" },
 		);
-		return nestedRows.flat();
+		return yield* collectIngestionSourcesEffect(sources);
 	});
 }
 

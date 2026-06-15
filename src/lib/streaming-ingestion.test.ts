@@ -2,7 +2,9 @@ import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { runEffectPromise } from "./effect-runtime";
 import {
+	collectIngestionSourcesEffect,
 	ingestStreamInBatchesEffect,
+	ingestSourcesInBatchesEffect,
 	streamAssignedJsonArray,
 } from "./streaming-ingestion";
 
@@ -47,5 +49,75 @@ describe("streaming ingestion", () => {
 		expect(processBatch).toHaveBeenNthCalledWith(2, [5], { processed: 5 });
 		expect(checkpoints).toEqual([4, 5]);
 		expect(result).toEqual({ processed: 5 });
+	});
+
+	it("ingests named sources sequentially with aggregate checkpoints", async () => {
+		const batches: Array<{
+			values: number[];
+			processed: number;
+			source: string;
+		}> = [];
+		const completed: string[] = [];
+		const result = await runEffectPromise(
+			ingestSourcesInBatchesEffect({
+				batchSize: 2,
+				sources: [
+					{
+						id: "first",
+						stream: async function* () {
+							yield 1;
+							yield 2;
+							yield 3;
+						},
+					},
+					{
+						id: "second",
+						stream: async function* () {
+							yield 4;
+						},
+					},
+				],
+				processBatch: (values, checkpoint) => {
+					batches.push({
+						values,
+						processed: checkpoint.processed,
+						source: checkpoint.sourceId,
+					});
+				},
+				onSourceComplete: ({ sourceId }) => {
+					completed.push(sourceId);
+				},
+			}),
+		);
+
+		expect(batches).toEqual([
+			{ values: [1, 2], processed: 2, source: "first" },
+			{ values: [3], processed: 3, source: "first" },
+			{ values: [4], processed: 4, source: "second" },
+		]);
+		expect(completed).toEqual(["first", "second"]);
+		expect(result).toEqual({ processed: 4 });
+	});
+
+	it("collects records from multiple sources in source order", async () => {
+		const effect = collectIngestionSourcesEffect([
+			{
+				id: "a",
+				stream: async function* () {
+					yield "a1";
+					yield "a2";
+				},
+			},
+			{
+				id: "b",
+				stream: async function* () {
+					yield "b1";
+				},
+			},
+		]);
+		const rows = await runEffectPromise(effect);
+
+		expect(rows).toEqual(["a1", "a2", "b1"]);
+		await expect(runEffectPromise(effect)).resolves.toEqual(["a1", "a2", "b1"]);
 	});
 });

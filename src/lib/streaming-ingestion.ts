@@ -6,6 +6,18 @@ export interface IngestionCheckpoint {
 	processed: number;
 }
 
+export interface IngestionSource<T> {
+	id: string;
+	stream: () => AsyncIterable<T>;
+}
+
+export interface IngestionSourceCheckpoint extends IngestionCheckpoint {
+	sourceId: string;
+	sourceIndex: number;
+	sourceProcessed: number;
+	sources: number;
+}
+
 export async function* streamJsonLines(
 	filePath: string,
 ): AsyncGenerator<{ lineNumber: number; value: Record<string, unknown> }> {
@@ -138,5 +150,91 @@ export function ingestStreamInBatchesEffect<T>({
 		},
 		catch: (error) =>
 			error instanceof Error ? error : new Error(String(error)),
+	});
+}
+
+export function ingestSourcesInBatchesEffect<T>({
+	batchSize,
+	onCheckpoint,
+	onSourceComplete,
+	processBatch,
+	sources,
+}: {
+	batchSize?: number;
+	onCheckpoint?: (
+		checkpoint: IngestionSourceCheckpoint,
+	) => void | Promise<void>;
+	onSourceComplete?: (
+		checkpoint: IngestionSourceCheckpoint,
+	) => void | Promise<void>;
+	processBatch: (
+		batch: T[],
+		checkpoint: IngestionSourceCheckpoint,
+	) => void | Promise<void>;
+	sources: IngestionSource<T>[];
+}): Effect.Effect<IngestionCheckpoint, unknown> {
+	return Effect.gen(function* () {
+		let processed = 0;
+
+		for (const [sourceIndex, source] of sources.entries()) {
+			const sourceResult = yield* ingestStreamInBatchesEffect({
+				batchSize,
+				source: source.stream,
+				processBatch: (batch, checkpoint) =>
+					processBatch(batch, {
+						...checkpoint,
+						processed: processed + checkpoint.processed,
+						sourceId: source.id,
+						sourceIndex,
+						sourceProcessed: checkpoint.processed,
+						sources: sources.length,
+					}),
+				onCheckpoint: onCheckpoint
+					? (checkpoint) =>
+							onCheckpoint({
+								...checkpoint,
+								processed: processed + checkpoint.processed,
+								sourceId: source.id,
+								sourceIndex,
+								sourceProcessed: checkpoint.processed,
+								sources: sources.length,
+							})
+					: undefined,
+			});
+			processed += sourceResult.processed;
+			yield* Effect.tryPromise({
+				try: () =>
+					Promise.resolve(
+						onSourceComplete?.({
+							processed,
+							sourceId: source.id,
+							sourceIndex,
+							sourceProcessed: sourceResult.processed,
+							sources: sources.length,
+						}),
+					),
+				catch: (error) =>
+					error instanceof Error ? error : new Error(String(error)),
+			});
+		}
+
+		return { processed };
+	});
+}
+
+export function collectIngestionSourcesEffect<T>(
+	sources: IngestionSource<T>[],
+	options: { batchSize?: number } = {},
+): Effect.Effect<T[], unknown> {
+	return Effect.gen(function* () {
+		const rows: T[] = [];
+		yield* ingestSourcesInBatchesEffect({
+			...options,
+			sources,
+			processBatch: (batch) => {
+				rows.push(...batch);
+			},
+		});
+		return rows;
 	});
 }
