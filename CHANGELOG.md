@@ -6,6 +6,7 @@
 
 - Centralize SQLite writes and migrations, unify live-sync ingestion, and move retained web server state to TanStack Query for faster sidebar navigation and fewer duplicate reads.
 - Isolate web reads onto query-only SQLite connections while serializing action and sync writes through one measured writer queue.
+- Share page caps, cursor progression, delays, and repeated-cursor protection across live timeline, DM, and follow-graph sync.
 
 ## 0.8.2 - 2026-06-15
 

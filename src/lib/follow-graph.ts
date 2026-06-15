@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import { getNativeDb } from "./db";
 import { listFollowUsersViaBirdEffect } from "./bird";
 import { runEffectPromise, tryPromise } from "./effect-runtime";
+import { collectPaginatedEffect } from "./paginated-sync";
 import type { Database } from "./sqlite";
 import { readSyncCache, writeSyncCache } from "./sync-cache";
 import type {
@@ -267,35 +268,27 @@ function fetchFollowGraphViaXurlEffect({
 	maxResources?: number;
 }): Effect.Effect<MergedFollowPayload, unknown> {
 	return Effect.gen(function* () {
-		const pages: XurlFollowUsersResponse[] = [];
-		let nextToken: string | undefined;
-		let pageCount = 0;
-		let collectedCount = 0;
+		const result = yield* collectPaginatedEffect({
+			fetchPage: ({ cursor }) =>
+				tryPromise(() =>
+					listFollowUsersViaXurl({
+						direction,
+						username,
+						userId,
+						maxResults: limit,
+						...(cursor ? { paginationToken: cursor } : {}),
+					}),
+				),
+			getItemCount: (page) => page.data.length,
+			getNextCursor: (page) =>
+				typeof page.meta?.next_token === "string"
+					? String(page.meta.next_token)
+					: undefined,
+			maxItems: maxResources,
+			maxPages,
+		});
 
-		do {
-			const payload = yield* tryPromise(() =>
-				listFollowUsersViaXurl({
-					direction,
-					username,
-					userId,
-					maxResults: limit,
-					paginationToken: nextToken,
-				}),
-			);
-			pages.push(payload);
-			collectedCount += payload.data.length;
-			nextToken =
-				typeof payload.meta?.next_token === "string"
-					? String(payload.meta.next_token)
-					: undefined;
-			pageCount += 1;
-		} while (
-			nextToken &&
-			(maxPages === undefined || pageCount < maxPages) &&
-			(maxResources === undefined || collectedCount < maxResources)
-		);
-
-		return mergePages(pages, nextToken, maxResources);
+		return mergePages(result.pages, result.nextCursor, maxResources);
 	});
 }
 

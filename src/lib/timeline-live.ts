@@ -8,6 +8,7 @@ import {
 	normalizeCacheTtlMs,
 	runCachedLiveSyncEffect,
 } from "./live-sync-engine";
+import { collectPaginatedEffect } from "./paginated-sync";
 import type {
 	XurlMediaItem,
 	XurlMentionUser,
@@ -232,56 +233,48 @@ export function syncHomeTimelineEffect({
 					new Error("xurl home timeline mode does not support --for-you"),
 				);
 			}
-			const pages: XurlMentionsResponse[] = [];
-			let nextToken: string | undefined;
-			for (let page = 0; page < parsedMaxPages; page += 1) {
-				const fetchedCount = pages.reduce(
-					(sum, item) => sum + item.data.length,
-					0,
-				);
-				const remaining = Number.isFinite(effectiveLimit)
-					? Math.max(1, effectiveLimit - fetchedCount)
-					: Infinity;
-				const pageSize = Math.min(
-					MAX_XURL_TIMELINE_PAGE_SIZE,
-					Math.max(5, remaining),
-				);
-				const pagePayload = yield* listHomeTimelineViaXurlEffect({
-					maxResults: pageSize,
-					userId: resolvedAccount.externalUserId,
-					username: resolvedAccount.username,
-					paginationToken: nextToken,
-					timeoutMs,
-				});
-				pages.push(pagePayload);
-				nextToken =
-					typeof pagePayload.meta?.next_token === "string"
-						? pagePayload.meta.next_token
-						: undefined;
-				const totalFetched = fetchedCount + pagePayload.data.length;
-				const done =
-					!nextToken ||
-					(Number.isFinite(parsedMaxPages) && page + 1 >= parsedMaxPages) ||
-					(Number.isFinite(effectiveLimit) && totalFetched >= effectiveLimit) ||
-					reachedStartTimeBoundary(pagePayload, parsedStartTime?.time);
-				yield* Effect.sync(() =>
+			const pageSizes = new Map<number, number>();
+			const result = yield* collectPaginatedEffect({
+				fetchPage: ({ cursor, fetched, pageIndex }) => {
+					const remaining = Number.isFinite(effectiveLimit)
+						? Math.max(1, effectiveLimit - fetched)
+						: Infinity;
+					const pageSize = Math.min(
+						MAX_XURL_TIMELINE_PAGE_SIZE,
+						Math.max(5, remaining),
+					);
+					pageSizes.set(pageIndex, pageSize);
+					return listHomeTimelineViaXurlEffect({
+						maxResults: pageSize,
+						userId: resolvedAccount.externalUserId,
+						username: resolvedAccount.username,
+						...(cursor ? { paginationToken: cursor } : {}),
+						timeoutMs,
+					});
+				},
+				getItemCount: (page) => page.data.length,
+				getNextCursor: (page) =>
+					typeof page.meta?.next_token === "string"
+						? page.meta.next_token
+						: undefined,
+				maxItems: effectiveLimit,
+				maxPages: parsedMaxPages,
+				shouldStop: ({ page }) =>
+					reachedStartTimeBoundary(page, parsedStartTime?.time),
+				onPage: ({ fetched, pageIndex, pageNumber, done }) =>
 					onProgress?.({
 						source: "xurl",
-						fetched: totalFetched,
+						fetched,
 						total: Number.isFinite(effectiveLimit) ? effectiveLimit : undefined,
-						page: page + 1,
+						page: pageNumber,
 						maxPages: Number.isFinite(parsedMaxPages)
 							? parsedMaxPages
 							: undefined,
-						pageSize,
+						pageSize: pageSizes.get(pageIndex),
 						done,
 					}),
-				);
-				if (done) {
-					break;
-				}
-			}
-			return mergeTimelinePayloads(pages, effectiveLimit);
+			});
+			return mergeTimelinePayloads(result.pages, effectiveLimit);
 		});
 		const fetchViaBird = listHomeTimelineViaBirdEffect({
 			maxResults: finiteFallbackLimit,

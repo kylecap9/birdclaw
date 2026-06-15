@@ -9,6 +9,7 @@ import {
 } from "./bird";
 import { getNativeDb } from "./db";
 import { runEffectPromise } from "./effect-runtime";
+import { collectPaginatedEffect } from "./paginated-sync";
 import { readSyncCache, writeSyncCache } from "./sync-cache";
 import type { XurlDmEventsResponse, XurlMentionUser } from "./types";
 import {
@@ -707,10 +708,6 @@ function mergeXurlDmPages(pages: XurlDmEventsResponse[]): XurlDmEventsResponse {
 	};
 }
 
-function sleepEffect(ms: number | undefined) {
-	return typeof ms === "number" && ms > 0 ? Effect.sleep(ms) : Effect.void;
-}
-
 function fetchDirectMessagesViaXurlEffect({
 	limit,
 	username,
@@ -725,25 +722,21 @@ function fetchDirectMessagesViaXurlEffect({
 	pageDelayMs?: number;
 }) {
 	return Effect.gen(function* () {
-		const pages: XurlDmEventsResponse[] = [];
-		let paginationToken: string | undefined;
-		let pageIndex = 0;
 		const pageLimit = allPages
 			? Number.POSITIVE_INFINITY
 			: Math.max(1, (maxPages ?? 0) + 1);
-		while (pageIndex < pageLimit) {
-			const page = yield* listDirectMessageEventsViaXurlEffect({
-				maxResults: limit,
-				username,
-				...(paginationToken ? { paginationToken } : {}),
-			});
-			pages.push(page);
-			pageIndex += 1;
-			paginationToken = getMetaNextToken(page.meta);
-			if (!paginationToken) break;
-			yield* sleepEffect(pageDelayMs);
-		}
-		return mergeXurlDmPages(pages);
+		const result = yield* collectPaginatedEffect({
+			fetchPage: ({ cursor }) =>
+				listDirectMessageEventsViaXurlEffect({
+					maxResults: limit,
+					username,
+					...(cursor ? { paginationToken: cursor } : {}),
+				}),
+			getNextCursor: (page) => getMetaNextToken(page.meta),
+			maxPages: pageLimit,
+			pageDelayMs,
+		});
+		return mergeXurlDmPages(result.pages);
 	});
 }
 
