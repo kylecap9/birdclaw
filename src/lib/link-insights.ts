@@ -718,9 +718,7 @@ export function getLinkInsights(
 
 	const db = getNativeDb({ seedDemoData: false });
 	const rankSourceText =
-		sort === "comments"
-			? "coalesce(dm.text, source_tweet.text, '')"
-			: "''";
+		sort === "comments" ? "coalesce(dm.text, source_tweet.text, '')" : "''";
 	const rankSourceJoins =
 		sort === "comments"
 			? `left join dm_messages dm
