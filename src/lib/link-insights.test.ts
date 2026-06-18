@@ -624,6 +624,22 @@ describe("link insights", () => {
 			shortUrl: "https://t.co/comments",
 			createdAt: "2026-05-09T10:00:00.000Z",
 		});
+		insertTweet(db, {
+			id: "recent_single",
+			authorProfileId: "profile_b",
+			text: "https://t.co/recent",
+			createdAt: "2026-05-11T10:00:00.000Z",
+		});
+		insertExpansion(db, {
+			shortUrl: "https://t.co/recent",
+			finalUrl: "https://recent.example/post",
+		});
+		insertOccurrence(db, {
+			sourceKind: "tweet",
+			sourceId: "recent_single",
+			shortUrl: "https://t.co/recent",
+			createdAt: "2026-05-11T10:00:00.000Z",
+		});
 
 		const now = new Date("2026-05-11T12:00:00.000Z");
 		expect(
@@ -634,5 +650,9 @@ describe("link insights", () => {
 			getLinkInsights({ range: "week", limit: 1, sort: "comments", now })
 				.items[0]?.host,
 		).toBe("comments.example");
+		expect(
+			getLinkInsights({ range: "week", limit: 1, sort: "recent", now }).items[0]
+				?.host,
+		).toBe("recent.example");
 	});
 });

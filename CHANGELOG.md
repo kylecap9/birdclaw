@@ -9,6 +9,7 @@
 - Consolidate API schemas, NDJSON clients, React Query caches, profile codecs, moderation state, scheduled jobs, and live pagination while deleting superseded runtime paths.
 - Split archive import, portable backup codecs, and CLI command registration into domain-owned modules with shared contract tests.
 - Refresh runtime and development dependencies and resolve esbuild 0.28.1, clearing the active dependency advisory.
+- Rank link insights with a lightweight first pass and hydrate only the requested top groups, substantially reducing all-time Links latency.
 
 ### Fixed
 

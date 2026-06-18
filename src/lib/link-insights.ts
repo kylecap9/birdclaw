@@ -123,6 +123,16 @@ interface LinkInsightRow {
 	linked_author_created_at: string | null;
 }
 
+interface LinkInsightRankRow {
+	occurrence_rowid: number;
+	source_kind: "dm" | "tweet";
+	short_url: string;
+	created_at: string;
+	expanded_url: string;
+	final_url: string;
+	source_text: string;
+}
+
 interface NormalizedUrl {
 	canonicalKey: string;
 	displayUrl: string;
@@ -147,6 +157,18 @@ interface InsightGroup {
 	topSharer: ProfileRecord | null;
 	totalInfluence: number;
 	url: string;
+}
+
+interface InsightRanking {
+	commentCount: number;
+	lastSeenAt: string;
+	shareCount: number;
+	totalInfluence: number;
+}
+
+interface RankedInsightGroup extends InsightRanking {
+	canonicalKey: string;
+	rowIds: number[];
 }
 
 const TITLE_SEGMENT_STOPWORDS = new Set([
@@ -373,6 +395,21 @@ function getInfluenceScore(profile: ProfileRecord | null) {
 	return Math.round(Math.log10(profile.followersCount + 10) * 24);
 }
 
+function getDetailRowInfluenceScore(row: LinkInsightRow) {
+	const profileId =
+		row.source_kind === "tweet" ? row.source_author_id : row.dm_sender_id;
+	if (!profileId) return 0;
+	const value =
+		row.source_kind === "tweet"
+			? row.source_author_followers_count
+			: row.dm_sender_followers_count;
+	const followersCount = Number(value ?? 0);
+	return Math.round(
+		Math.log10((Number.isFinite(followersCount) ? followersCount : 0) + 10) *
+			24,
+	);
+}
+
 function chooseMetadata(existing: string | null, candidate: string | null) {
 	if (!candidate) {
 		return existing;
@@ -492,6 +529,20 @@ function buildMention(row: LinkInsightRow, normalized: NormalizedUrl) {
 	return mention;
 }
 
+function rankRowHasComment(row: LinkInsightRankRow, normalized: NormalizedUrl) {
+	const rawText = String(row.source_text ?? "");
+	return (
+		stripUrls(rawText, [
+			row.short_url,
+			row.expanded_url,
+			row.final_url,
+			normalized.url,
+			normalized.displayUrl,
+			...(rawText.match(RAW_URL_PATTERN) ?? []),
+		]).length > 0
+	);
+}
+
 function toInsight(
 	group: InsightGroup,
 	commentsLimit: number,
@@ -546,7 +597,7 @@ function toInsight(
 	};
 }
 
-function compareRank(left: LinkInsightItem, right: LinkInsightItem) {
+function compareRank(left: InsightRanking, right: InsightRanking) {
 	if (right.shareCount !== left.shareCount) {
 		return right.shareCount - left.shareCount;
 	}
@@ -557,7 +608,7 @@ function compareRank(left: LinkInsightItem, right: LinkInsightItem) {
 }
 
 function compareInsights(sort: LinkInsightSort) {
-	return (left: LinkInsightItem, right: LinkInsightItem) => {
+	return (left: InsightRanking, right: InsightRanking) => {
 		if (sort === "recent") {
 			return (
 				right.lastSeenAt.localeCompare(left.lastSeenAt) ||
@@ -573,6 +624,31 @@ function compareInsights(sort: LinkInsightSort) {
 		}
 		return compareRank(left, right);
 	};
+}
+
+function selectHydrationCandidates(
+	groups: RankedInsightGroup[],
+	sort: LinkInsightSort,
+	limit: number,
+) {
+	if (sort === "comments") {
+		return [...groups].sort(compareInsights(sort)).slice(0, limit);
+	}
+
+	// Share count and recency are the primary rank keys. Only groups tied at or
+	// above the limit boundary need their full profile/media rows hydrated.
+	const sorted = [...groups].sort((left, right) =>
+		sort === "recent"
+			? right.lastSeenAt.localeCompare(left.lastSeenAt)
+			: right.shareCount - left.shareCount,
+	);
+	const boundary = sorted[Math.min(limit - 1, sorted.length - 1)];
+	if (!boundary) return [];
+	return sorted.filter((group) =>
+		sort === "recent"
+			? group.lastSeenAt >= boundary.lastSeenAt
+			: group.shareCount >= boundary.shareCount,
+	);
 }
 
 export function getLinkInsights(
@@ -641,6 +717,91 @@ export function getLinkInsights(
 	}
 
 	const db = getNativeDb({ seedDemoData: false });
+	const rankSourceText =
+		sort === "comments"
+			? "coalesce(dm.text, source_tweet.text, '')"
+			: "''";
+	const rankSourceJoins =
+		sort === "comments"
+			? `left join dm_messages dm
+        on o.source_kind = 'dm' and dm.id = o.source_id
+      left join tweets source_tweet
+        on o.source_kind = 'tweet' and source_tweet.id = o.source_id`
+			: "";
+	const rankRows = db
+		.prepare(`
+      select
+        o.rowid as occurrence_rowid,
+        o.source_kind,
+        o.short_url,
+        o.created_at,
+        e.expanded_url,
+        e.final_url,
+        ${rankSourceText} as source_text
+      from link_occurrences o
+      join url_expansions e on e.short_url = o.short_url
+      ${rankSourceJoins}
+      where ${conditions.join(" and ")}
+      order by o.created_at desc
+    `)
+		.all(...params) as LinkInsightRankRow[];
+
+	const rankedGroups = new Map<string, RankedInsightGroup>();
+	let occurrences = 0;
+	for (const row of rankRows) {
+		const normalized = normalizeUrl(
+			row.final_url || row.expanded_url || row.short_url,
+		);
+		if (!normalized) continue;
+		const rowKind: LinkInsightKind = isVideoHost(normalized.host)
+			? "videos"
+			: "links";
+		if (rowKind !== kind) continue;
+		occurrences++;
+
+		const existing = rankedGroups.get(normalized.canonicalKey);
+		if (existing) {
+			existing.rowIds.push(row.occurrence_rowid);
+			existing.shareCount++;
+			if (sort === "comments" && rankRowHasComment(row, normalized)) {
+				existing.commentCount++;
+			}
+			if (row.created_at > existing.lastSeenAt) {
+				existing.lastSeenAt = row.created_at;
+			}
+			continue;
+		}
+
+		rankedGroups.set(normalized.canonicalKey, {
+			canonicalKey: normalized.canonicalKey,
+			commentCount:
+				sort === "comments" && rankRowHasComment(row, normalized) ? 1 : 0,
+			lastSeenAt: row.created_at,
+			rowIds: [row.occurrence_rowid],
+			shareCount: 1,
+			totalInfluence: 0,
+		});
+	}
+
+	const preliminaryGroups = selectHydrationCandidates(
+		[...rankedGroups.values()],
+		sort,
+		limit,
+	);
+	const candidateRowIds = preliminaryGroups.flatMap((group) => group.rowIds);
+	if (candidateRowIds.length === 0) {
+		return {
+			kind,
+			range,
+			sort,
+			source,
+			since: bounds.since,
+			until: bounds.until,
+			items: [],
+			stats: { occurrences, groups: rankedGroups.size },
+		};
+	}
+
 	const rows = db
 		.prepare(`
       select
@@ -734,13 +895,32 @@ export function getLinkInsights(
         on linked.id = e.expanded_tweet_id
       left join profiles linked_author
         on linked_author.id = linked.author_profile_id
-      where ${conditions.join(" and ")}
-      order by o.created_at desc
-    `)
-		.all(...params) as LinkInsightRow[];
+	      where o.rowid in (
+	        select cast(value as integer)
+	        from json_each(?)
+	      )
+	      order by o.created_at desc
+	    `)
+		.all(JSON.stringify(candidateRowIds)) as LinkInsightRow[];
+
+	for (const row of rows) {
+		const normalized = normalizeUrl(
+			row.final_url || row.expanded_url || row.short_url,
+		);
+		if (!normalized) continue;
+		const rankedGroup = rankedGroups.get(normalized.canonicalKey);
+		if (rankedGroup) {
+			rankedGroup.totalInfluence += getDetailRowInfluenceScore(row);
+		}
+	}
+	const selectedGroups = preliminaryGroups
+		.sort(compareInsights(sort))
+		.slice(0, limit);
+	const selectedKeys = new Set(
+		selectedGroups.map((group) => group.canonicalKey),
+	);
 
 	const groups = new Map<string, InsightGroup>();
-	let occurrences = 0;
 	for (const row of rows) {
 		const rawUrl = row.final_url || row.expanded_url || row.short_url;
 		const normalized = normalizeUrl(rawUrl);
@@ -753,8 +933,7 @@ export function getLinkInsights(
 		if (rowKind !== kind) {
 			continue;
 		}
-		occurrences++;
-
+		if (!selectedKeys.has(normalized.canonicalKey)) continue;
 		const mention = buildMention(row, normalized);
 		const sharerKey = mention.sharedBy
 			? mention.sharedBy.id
@@ -814,10 +993,15 @@ export function getLinkInsights(
 		});
 	}
 
-	const items = [...groups.values()]
-		.map((group) => toInsight(group, commentsLimit))
-		.sort(compareInsights(sort))
-		.slice(0, limit);
+	const itemsByKey = new Map(
+		[...groups.entries()].map(([key, group]) => [
+			key,
+			toInsight(group, commentsLimit),
+		]),
+	);
+	const items = selectedGroups
+		.map((group) => itemsByKey.get(group.canonicalKey))
+		.filter((item): item is LinkInsightItem => item !== undefined);
 
 	return {
 		kind,
@@ -829,7 +1013,7 @@ export function getLinkInsights(
 		items,
 		stats: {
 			occurrences,
-			groups: groups.size,
+			groups: rankedGroups.size,
 		},
 	};
 }
