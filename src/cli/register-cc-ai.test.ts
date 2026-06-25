@@ -15,7 +15,7 @@ vi.mock("#/lib/bird", async (importOriginal) => {
 	return { ...actual, searchTweetsViaBird: searchMock };
 });
 
-import { readAiFeed, syncAiFeed } from "./register-cc-ai";
+import { interleaveByAuthor, readAiFeed, syncAiFeed } from "./register-cc-ai";
 
 describe("AI feed (ai-sync / ai-feed)", () => {
 	let home: TestHome;
@@ -92,5 +92,24 @@ describe("AI feed (ai-sync / ai-feed)", () => {
 			maxResults: 3,
 		});
 		expect(searchMock).toHaveBeenCalledWith("robotics", { maxResults: 3 });
+	});
+
+	it("interleaveByAuthor round-robins so no single account dominates the top", () => {
+		const mk = (handle: string, id: string) => ({ id, author: { handle } });
+		const out = interleaveByAuthor([
+			mk("chatty", "1"),
+			mk("chatty", "2"),
+			mk("chatty", "3"),
+			mk("rare", "4"),
+			mk("solo", "5"),
+		]);
+		// the top 3 are one from each distinct author (diverse), not chatty/chatty/chatty
+		expect(out.slice(0, 3).map((t) => t.author.handle)).toEqual([
+			"chatty",
+			"rare",
+			"solo",
+		]);
+		// nothing dropped; chatty's extras come after the first round, in order
+		expect(out.map((t) => t.id)).toEqual(["1", "4", "5", "2", "3"]);
 	});
 });

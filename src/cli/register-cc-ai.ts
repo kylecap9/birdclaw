@@ -44,7 +44,13 @@ const DEFAULT_HANDLES = [
 	"OpenAIDevs",
 	"goodside",
 ];
-const DEFAULT_QUERIES: string[] = [];
+// High-signal topic searches for breadth beyond the roster — catch big AI news from anyone.
+// Tuned to resist X's crypto/engagement-bait spam: a high min_faves: floor, English, no replies
+// or native-RTs, and explicit crypto exclusions. (Verified live before adding.)
+const DEFAULT_QUERIES: string[] = [
+	'(LLM OR "language model" OR "frontier model") min_faves:800 -filter:replies -filter:nativeretweets lang:en -crypto -$ -airdrop -token',
+	'("AI model" OR "open weights" OR "open-source AI" OR "model release") min_faves:1000 -filter:replies -filter:nativeretweets lang:en -crypto -$ -airdrop -token',
+];
 
 interface Roster {
 	handles: string[];
@@ -70,8 +76,46 @@ function loadRoster(path?: string): Roster {
 	return { handles: DEFAULT_HANDLES, queries: DEFAULT_QUERIES };
 }
 
+// Round-robin by author so no single chatty account dominates the top: take each author's newest
+// post (authors ordered by recency of their newest), then their next, and so on. Preserves
+// per-author recency order; keeps the feed fresh AND diverse.
+export function interleaveByAuthor<
+	T extends { author?: { handle?: string; id?: string } },
+>(items: T[]): T[] {
+	const groups = new Map<string, T[]>();
+	const order: string[] = [];
+	for (const item of items) {
+		const key = item.author?.handle || item.author?.id || "?";
+		let group = groups.get(key);
+		if (!group) {
+			group = [];
+			groups.set(key, group);
+			order.push(key);
+		}
+		group.push(item);
+	}
+	const out: T[] = [];
+	let progressed = true;
+	while (progressed) {
+		progressed = false;
+		for (const key of order) {
+			const group = groups.get(key);
+			if (group && group.length > 0) {
+				out.push(group.shift() as T);
+				progressed = true;
+			}
+		}
+	}
+	return out;
+}
+
 export function readAiFeed(limit = 50): TimelineItem[] {
-	return listTimelineItems({ resource: "ai", limit });
+	// Pull a larger recency-ordered pool, then interleave by author and take the top `limit`.
+	const pool = listTimelineItems({
+		resource: "ai",
+		limit: Math.max(limit * 4, 80),
+	});
+	return interleaveByAuthor(pool).slice(0, limit);
 }
 
 export interface AiSyncResult {
