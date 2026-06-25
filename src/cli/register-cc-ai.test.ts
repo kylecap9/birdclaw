@@ -56,7 +56,10 @@ describe("AI feed (ai-sync / ai-feed)", () => {
 		expect(
 			searchMock.mock.calls.some((c) => String(c[0]).startsWith("from:")),
 		).toBe(true);
-		expect(searchMock).toHaveBeenCalledWith("from:karpathy", { maxResults: 5 });
+		// roster accounts are pulled as original posts only (replies excluded)
+		expect(searchMock).toHaveBeenCalledWith("from:karpathy -filter:replies", {
+			maxResults: 5,
+		});
 
 		// the AI content is readable via the local ai-feed
 		expect(readAiFeed(50).length).toBeGreaterThan(0);
@@ -85,7 +88,9 @@ describe("AI feed (ai-sync / ai-feed)", () => {
 		await syncAiFeed({ roster: rosterPath, per: 3, delayMs: 0 });
 
 		expect(searchMock).toHaveBeenCalledTimes(2);
-		expect(searchMock).toHaveBeenCalledWith("from:onlyone", { maxResults: 3 });
+		expect(searchMock).toHaveBeenCalledWith("from:onlyone -filter:replies", {
+			maxResults: 3,
+		});
 		expect(searchMock).toHaveBeenCalledWith("robotics", { maxResults: 3 });
 	});
 });

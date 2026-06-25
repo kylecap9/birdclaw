@@ -93,8 +93,10 @@ export async function syncAiFeed(
 	const { handles, queries } = loadRoster(opts.roster);
 	const per = opts.per ?? 15;
 	const delayMs = opts.delayMs ?? 800;
+	// Exclude replies: a roster account's "@x thanks!" replies are clutter; we want their original
+	// posts/threads (the substantive AI content). Retweets are kept — AI accounts' RTs are signal.
 	const terms = [
-		...handles.map((h) => `from:${h.replace(/^@/, "")}`),
+		...handles.map((h) => `from:${h.replace(/^@/, "")} -filter:replies`),
 		...queries,
 	];
 	let synced = 0;
