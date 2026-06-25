@@ -1123,6 +1123,24 @@ export function getTweetConversation(
 
 	items.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 
+	// Attach embedded quote tweets so comments render the quoted card like the feed does. One
+	// level deep; the quoted tweet is fetched only if it's already in the local store.
+	for (const item of items) {
+		const row = db
+			.prepare("select quoted_tweet_id from tweets where id = ?")
+			.get(item.id) as { quoted_tweet_id?: string | null } | undefined;
+		const quotedId = row?.quoted_tweet_id;
+		if (quotedId) {
+			const quoted = getTweetById(
+				db,
+				urlExpansionCache,
+				String(quotedId),
+				resolveProfileByHandle,
+			);
+			if (quoted) item.quotedTweet = quoted;
+		}
+	}
+
 	return {
 		anchorId: anchor.id,
 		items,

@@ -143,6 +143,8 @@ export interface EmbeddedTweet {
 	author: ProfileRecord;
 	entities: TweetEntities;
 	media: TweetMediaItem[];
+	// Embedded quote tweet (one level), so comments can render an embed card like the feed does.
+	quotedTweet?: EmbeddedTweet | null;
 }
 
 export interface TweetConversation {

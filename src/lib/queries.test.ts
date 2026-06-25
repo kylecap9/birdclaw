@@ -1235,6 +1235,44 @@ describe("birdclaw queries", () => {
 		expect(ids.at(-1)).toBe("deep_child");
 	});
 
+	it("attaches an embedded quote tweet to conversation items (comments)", () => {
+		setupTempHome();
+		const db = getNativeDb();
+		const insertTweet = db.prepare(`
+			insert into tweets (
+				id, author_profile_id, text, created_at, is_replied, reply_to_id,
+				like_count, media_count, entities_json, media_json, quoted_tweet_id
+			) values (?, 'profile_me', ?, ?, 0, ?, 0, 0, '{}', '[]', ?)
+		`);
+		insertTweet.run(
+			"q_quoted",
+			"the quoted original",
+			"2026-03-10T09:00:00.000Z",
+			null,
+			null,
+		);
+		insertTweet.run(
+			"q_anchor",
+			"anchor tweet",
+			"2026-03-10T10:00:00.000Z",
+			null,
+			null,
+		);
+		insertTweet.run(
+			"q_reply",
+			"look at this",
+			"2026-03-10T10:01:00.000Z",
+			"q_anchor",
+			"q_quoted",
+		);
+
+		const conversation = getTweetConversation("q_anchor");
+		const reply = conversation?.items.find((t) => t.id === "q_reply");
+
+		expect(reply?.quotedTweet?.id).toBe("q_quoted");
+		expect(reply?.quotedTweet?.text).toBe("the quoted original");
+	});
+
 	it("builds a mixed inbox with ranked mentions and dms", () => {
 		setupTempHome();
 
