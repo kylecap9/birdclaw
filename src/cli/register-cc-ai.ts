@@ -13,6 +13,9 @@ import { ingestTweetPayload } from "#/lib/tweet-repository";
 import type { CliCommandContext } from "./command-context";
 
 // Strong default roster — leading AI researchers, labs, and builders. Editable via --roster.
+// Roster-curated by design: the accounts ARE the quality filter. Broad topic searches are left
+// empty by default because on X they're dominated by crypto/engagement-bait spam; add high-signal
+// queries (e.g. with min_faves:) to the roster file if you want extra breadth.
 const DEFAULT_HANDLES = [
 	"karpathy",
 	"sama",
@@ -30,8 +33,18 @@ const DEFAULT_HANDLES = [
 	"TheTuringPost",
 	"huggingface",
 	"MistralAI",
+	"AndrewYNg",
+	"hardmaru",
+	"_jasonwei",
+	"alexalbert__",
+	"demishassabis",
+	"JeffDean",
+	"ClementDelangue",
+	"AIatMeta",
+	"OpenAIDevs",
+	"goodside",
 ];
-const DEFAULT_QUERIES = ["AI agents", "open source LLM", "new AI model"];
+const DEFAULT_QUERIES: string[] = [];
 
 interface Roster {
 	handles: string[];
