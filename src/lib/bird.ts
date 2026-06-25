@@ -22,6 +22,11 @@ const BIRD_STDOUT_REDIRECT_SCRIPT = 'out="$1"; shift; exec "$@" > "$out"';
 interface BirdTweetMedia {
 	type?: string;
 	url?: string;
+	previewUrl?: string;
+	videoUrl?: string;
+	durationMs?: number;
+	width?: number;
+	height?: number;
 }
 
 interface BirdTweetAuthor {
@@ -380,15 +385,32 @@ function toMediaEntities(media: BirdTweetMedia[] | undefined) {
 
 	return {
 		urls: media
-			.filter((item) => typeof item?.url === "string" && item.url.length > 0)
-			.map((item, index) => ({
-				start: index,
-				end: index,
-				url: item.url as string,
-				expanded_url: item.url as string,
-				display_url: item.url as string,
-				media_key: `bird_media_${index}`,
-			})),
+			.filter(
+				(item) =>
+					(typeof item?.url === "string" && item.url.length > 0) ||
+					(typeof item?.videoUrl === "string" && item.videoUrl.length > 0),
+			)
+			.map((item, index) => {
+				const display = (item.url ?? item.videoUrl) as string;
+				return {
+					start: index,
+					end: index,
+					url: display,
+					expanded_url: display,
+					display_url: display,
+					media_key: `bird_media_${index}`,
+					// Carry video fields through so birdEntityMedia can emit a playable <video>
+					// instead of collapsing it to its thumbnail-as-image.
+					...(item.type ? { mediaType: item.type } : {}),
+					...(item.videoUrl ? { videoUrl: item.videoUrl } : {}),
+					...(item.previewUrl ? { previewUrl: item.previewUrl } : {}),
+					...(typeof item.width === "number" ? { width: item.width } : {}),
+					...(typeof item.height === "number" ? { height: item.height } : {}),
+					...(typeof item.durationMs === "number"
+						? { durationMs: item.durationMs }
+						: {}),
+				};
+			}),
 	};
 }
 

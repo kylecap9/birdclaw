@@ -105,13 +105,43 @@ function entityMediaUrl(value: Record<string, unknown>) {
 	return null;
 }
 
-function birdEntityMedia(tweet: TweetWithMediaAttachments) {
+export function birdEntityMedia(tweet: TweetWithMediaAttachments) {
 	const urls = Array.isArray(tweet.entities?.urls) ? tweet.entities.urls : [];
 	const seen = new Set<string>();
 	const items: TweetMediaItem[] = [];
 	for (const url of urls) {
 		const item = record(url);
 		if (!item || typeof item.media_key !== "string") continue;
+
+		// Video / gif: bird carries the playable mp4 in `videoUrl` and a thumbnail in
+		// `previewUrl`/`url`. Emit a real <video>-capable item (with an mp4 variant) instead of
+		// collapsing it to a static image.
+		const mediaType = typeof item.mediaType === "string" ? item.mediaType : "";
+		const videoUrl = directMediaUrl(item.videoUrl, true);
+		if (
+			(mediaType === "video" ||
+				mediaType === "gif" ||
+				mediaType === "animated_gif") &&
+			videoUrl &&
+			!seen.has(videoUrl)
+		) {
+			seen.add(videoUrl);
+			const poster =
+				directMediaUrl(item.url, true) ?? directMediaUrl(item.previewUrl, true);
+			items.push({
+				url: poster ?? videoUrl,
+				type: mediaType === "video" ? "video" : "gif",
+				...(poster ? { thumbnailUrl: poster } : {}),
+				variants: [{ url: videoUrl, contentType: "video/mp4" }],
+				...(typeof item.width === "number" ? { width: item.width } : {}),
+				...(typeof item.height === "number" ? { height: item.height } : {}),
+				...(typeof item.durationMs === "number"
+					? { durationMs: item.durationMs }
+					: {}),
+			});
+			continue;
+		}
+
 		const mediaUrl = entityMediaUrl(item);
 		if (!mediaUrl || seen.has(mediaUrl)) continue;
 		seen.add(mediaUrl);

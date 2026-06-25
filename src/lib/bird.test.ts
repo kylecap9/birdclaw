@@ -268,6 +268,7 @@ describe("bird transport wrapper", () => {
 								expanded_url: "https://pbs.twimg.com/media/other.jpg",
 								display_url: "https://pbs.twimg.com/media/other.jpg",
 								media_key: "bird_media_0",
+								mediaType: "photo",
 							},
 						],
 					},
