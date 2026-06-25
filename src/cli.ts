@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Command } from "commander";
 import { createCommandContext } from "#/cli/command-context";
 import { registerAnalysisCommands } from "#/cli/register-analysis";
+import { registerCcThreadCommands } from "#/cli/register-cc-thread";
 import { registerComposeCommands } from "#/cli/register-compose";
 import { registerCoreCommands } from "#/cli/register-core";
 import { registerDirectMessageCommands } from "#/cli/register-dms";
@@ -45,6 +46,7 @@ const commandContext = createCommandContext(program);
 
 registerCoreCommands(commandContext);
 registerSearchCommands(commandContext);
+registerCcThreadCommands(commandContext);
 registerAnalysisCommands(commandContext);
 registerMentionCommands(commandContext);
 registerDirectMessageCommands(commandContext);
