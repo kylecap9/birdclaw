@@ -339,7 +339,9 @@ export interface DmConversationItem {
 }
 
 export interface TimelineQuery {
-	resource: Exclude<ResourceKind, "dms">;
+	// "ai" is an internal Command Center lane (curated AI feed via the "ai" edge), not a public
+	// query resource — kept out of the public resourceKindSchema on purpose.
+	resource: Exclude<ResourceKind, "dms"> | "ai";
 	account?: string;
 	search?: string;
 	replyFilter?: ReplyFilter;
