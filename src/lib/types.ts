@@ -593,6 +593,9 @@ export interface ProfileRepliesResponse {
 
 export interface XurlMentionsResponse {
 	data: XurlMentionData[];
+	// Referenced tweets inlined by the source (e.g. bird's quoted/retweeted tweets) — ingested
+	// edge-less so they land in the store for embed rendering without entering any feed lane.
+	embedded?: XurlMentionData[];
 	includes?: {
 		users?: XurlMentionUser[];
 		media?: XurlMediaItem[];

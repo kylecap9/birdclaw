@@ -945,7 +945,11 @@ describe("bird transport wrapper", () => {
 				id: "1",
 				text: "hello",
 				createdAt: "2026-05-01T00:00:00.000Z",
-				quotedTweet: { id: "quoted" },
+				quotedTweet: {
+					id: "quoted",
+					text: "q",
+					createdAt: "2026-05-01T00:00:00.000Z",
+				},
 			}),
 		).toEqual([{ type: "quoted", id: "quoted" }]);
 		expect(

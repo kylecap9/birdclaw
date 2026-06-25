@@ -123,5 +123,16 @@ export function ingestTweetPayload(
 		}
 	})();
 
+	// Inlined referenced tweets (quoted/retweeted) — store them EDGE-LESS (no edgeKind/collection)
+	// so embeds resolve from the local store without the referenced tweet entering any feed lane.
+	if (Array.isArray(payload.embedded) && payload.embedded.length > 0) {
+		ingestTweetPayload(db, {
+			accountId,
+			payload: { data: payload.embedded, includes: payload.includes },
+			source,
+			markRepliesAsReplied: false,
+		});
+	}
+
 	return tweetIds;
 }

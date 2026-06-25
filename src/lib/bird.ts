@@ -51,8 +51,8 @@ interface BirdTweetItem {
 	inReplyToStatusId?: string | null;
 	quotedStatusId?: string | null;
 	retweetedStatusId?: string | null;
-	quotedTweet?: { id?: string | null } | null;
-	retweetedTweet?: { id?: string | null } | null;
+	quotedTweet?: BirdTweetItem | null;
+	retweetedTweet?: BirdTweetItem | null;
 	author?: BirdTweetAuthor;
 	authorId?: string;
 	media?: BirdTweetMedia[];
@@ -466,39 +466,61 @@ function toReferencedTweets(item: BirdTweetItem) {
 	return references.length > 0 ? references : undefined;
 }
 
+function toMentionData(
+	item: BirdTweetItem,
+	users: Map<string, XurlMentionUser>,
+): XurlMentionData {
+	const authorId = String(item.authorId ?? item.author?.username ?? "unknown");
+	if (!users.has(authorId)) {
+		users.set(authorId, {
+			id: authorId,
+			username: item.author?.username ?? `user_${authorId}`,
+			name: item.author?.name ?? item.author?.username ?? `user_${authorId}`,
+		});
+	}
+
+	return {
+		id: item.id,
+		author_id: authorId,
+		text: item.text,
+		created_at: toIsoTimestamp(item.createdAt),
+		conversation_id: item.conversationId ?? item.id,
+		entities: toTweetEntities(item),
+		referenced_tweets: toReferencedTweets(item),
+		public_metrics: {
+			reply_count: Number(item.replyCount ?? 0),
+			retweet_count: Number(item.retweetCount ?? 0),
+			like_count: Number(item.likeCount ?? 0),
+		},
+		edit_history_tweet_ids: [item.id],
+	};
+}
+
 function normalizeBirdTweets(items: BirdTweetItem[]): XurlMentionsResponse {
 	const users = new Map<string, XurlMentionUser>();
-	const data = items.map((item): XurlMentionData => {
-		const authorId = String(
-			item.authorId ?? item.author?.username ?? "unknown",
-		);
-		if (!users.has(authorId)) {
-			users.set(authorId, {
-				id: authorId,
-				username: item.author?.username ?? `user_${authorId}`,
-				name: item.author?.name ?? item.author?.username ?? `user_${authorId}`,
-			});
+	const embedded: XurlMentionData[] = [];
+	const seenEmbedded = new Set<string>();
+	const data = items.map((item) => {
+		// Bird inlines the full quoted/retweeted tweet. Capture it in `embedded` (ingested
+		// edge-less) so it lands in the local store and the UI can render an embed card, not a link.
+		for (const ref of [item.quotedTweet, item.retweetedTweet]) {
+			if (
+				ref &&
+				typeof ref.id === "string" &&
+				ref.id.length > 0 &&
+				typeof ref.text === "string" &&
+				!seenEmbedded.has(ref.id)
+			) {
+				seenEmbedded.add(ref.id);
+				embedded.push(toMentionData(ref, users));
+			}
 		}
-
-		return {
-			id: item.id,
-			author_id: authorId,
-			text: item.text,
-			created_at: toIsoTimestamp(item.createdAt),
-			conversation_id: item.conversationId ?? item.id,
-			entities: toTweetEntities(item),
-			referenced_tweets: toReferencedTweets(item),
-			public_metrics: {
-				reply_count: Number(item.replyCount ?? 0),
-				retweet_count: Number(item.retweetCount ?? 0),
-				like_count: Number(item.likeCount ?? 0),
-			},
-			edit_history_tweet_ids: [item.id],
-		};
+		return toMentionData(item, users);
 	});
 
 	return {
 		data,
+		...(embedded.length > 0 ? { embedded } : {}),
 		includes:
 			users.size > 0 ? { users: Array.from(users.values()) } : undefined,
 		meta: {
