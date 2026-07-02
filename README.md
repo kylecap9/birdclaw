@@ -233,7 +233,7 @@ birdclaw import archive ~/Downloads/twitter-archive-2025.zip --json
 
 Don't have an archive yet? Request it from <https://x.com/settings/download_your_data>; X emails a download link when it is ready, which may take a few days. A fresh Birdclaw database needs the archive import to establish account identity before live sync. See [Archive Import → Get an archive](docs/archive.md#get-an-archive).
 
-Optional profile hydration can improve bios, follower counts, and avatars, but it performs live X profile reads and can spend API credits on large archives:
+Optional profile hydration through xurl can improve bios, follower counts, and avatars, but it performs live X profile reads and can spend API credits on large archives. In Bird-only mode, the command corrects the seeded local account identity from `bird whoami` without bulk-hydrating imported profiles:
 
 ```bash
 birdclaw import hydrate-profiles --json

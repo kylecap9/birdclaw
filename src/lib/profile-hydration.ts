@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 
 import { normalizeAvatarUrl } from "./avatar-cache";
+import { getAuthenticatedBirdAccount } from "./bird";
 import { getNativeDb } from "./db";
 import { runEffectPromise, tryPromise } from "./effect-runtime";
 import {
@@ -39,6 +40,97 @@ function trySync<T>(try_: () => T) {
 	});
 }
 
+const SEEDED_ACCOUNT_HANDLE = "steipete";
+const SEEDED_ACCOUNT_EXTERNAL_USER_ID = "25401953";
+
+function hydrateAccountFromBirdEffect(): Effect.Effect<boolean, unknown> {
+	return Effect.gen(function* () {
+		const account = yield* tryPromise(() => getAuthenticatedBirdAccount()).pipe(
+			Effect.catchAll(() => Effect.succeed(null)),
+		);
+		if (!account?.username) return false;
+
+		const handle = account.username.replace(/^@/, "");
+		const name = account.name?.trim() || null;
+		const externalUserId = account.id ?? null;
+		const hydrated = yield* trySync(() => {
+			const db = getNativeDb();
+			return db.transaction(() => {
+				const current = db
+					.prepare(
+						`select handle, external_user_id, transport from accounts where id = 'acct_primary'`,
+					)
+					.get() as
+					| {
+							handle: string | null;
+							external_user_id: string | null;
+							transport: string;
+					  }
+					| undefined;
+				if (!current) return false;
+
+				const storedHandle = current?.handle?.replace(/^@/, "") ?? null;
+				const handleMatches =
+					storedHandle?.toLowerCase() === handle.toLowerCase();
+				const identityMatches =
+					externalUserId !== null && current.external_user_id !== null
+						? externalUserId === current.external_user_id
+						: handleMatches;
+				const isSeededPlaceholder =
+					storedHandle?.toLowerCase() === SEEDED_ACCOUNT_HANDLE &&
+					current.external_user_id === SEEDED_ACCOUNT_EXTERNAL_USER_ID &&
+					current.transport === "xurl";
+
+				// An archive establishes account ownership for tweets, DMs, and edges.
+				// Never relabel that data from whichever account Bird currently uses;
+				// only the untouched demo seed may adopt a different Bird identity.
+				if (!identityMatches && !isSeededPlaceholder) return false;
+				const identityChanged = !identityMatches;
+
+				// On an identity change the seeded avatar belongs to a different
+				// person, and bird whoami can't supply a replacement, so clear it and
+				// let the UI fall back to initials rather than showing the previous
+				// user's photo. Likewise clear a stale external_user_id when the new
+				// identity has no id of its own.
+				if (identityChanged) {
+					db.prepare(
+						`update profiles
+						 set handle = ?,
+						     display_name = coalesce(?, display_name),
+						     avatar_url = null
+						 where id = 'profile_me'`,
+					).run(handle, name);
+					db.prepare(
+						`update accounts
+						 set handle = ?,
+						     name = coalesce(?, name),
+						     transport = 'bird',
+						     external_user_id = ?
+						 where id = 'acct_primary'`,
+					).run(`@${handle}`, name, externalUserId);
+				} else {
+					db.prepare(
+						`update profiles
+						 set handle = ?,
+						     display_name = coalesce(?, display_name)
+						 where id = 'profile_me'`,
+					).run(handle, name);
+					db.prepare(
+						`update accounts
+						 set handle = ?,
+						     name = coalesce(?, name),
+						     transport = 'bird',
+						     external_user_id = coalesce(?, external_user_id)
+						 where id = 'acct_primary'`,
+					).run(`@${handle}`, name, externalUserId);
+				}
+				return true;
+			})();
+		});
+		return hydrated;
+	});
+}
+
 export function hydrateProfilesFromXEffect(): Effect.Effect<
 	HydrateProfilesResult,
 	unknown
@@ -46,10 +138,14 @@ export function hydrateProfilesFromXEffect(): Effect.Effect<
 	return Effect.gen(function* () {
 		const transport = yield* tryPromise(() => getTransportStatus());
 		if (transport.availableTransport !== "xurl") {
+			// xurl is unavailable, so the live profile backfill can't run. When the
+			// bird transport is authenticated we can still correct the seeded
+			// account handle (e.g. the placeholder @steipete) from `bird whoami`.
+			const hydratedAccount = yield* hydrateAccountFromBirdEffect();
 			return {
 				ok: true,
 				hydratedProfiles: 0,
-				hydratedAccount: false,
+				hydratedAccount,
 				reason: transport.statusText,
 			};
 		}

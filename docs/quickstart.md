@@ -39,7 +39,7 @@ birdclaw import archive --json
 birdclaw import archive ~/Downloads/twitter-archive-2025.zip --json
 ```
 
-Optional profile hydration fills bios, follower counts, and avatars from live Twitter metadata using whichever transport is available. It can perform hundreds or thousands of live profile reads on large archives, so run it only when you are ready to spend those X API reads:
+Optional profile hydration through xurl fills bios, follower counts, and avatars from live Twitter metadata. It can perform hundreds or thousands of live profile reads on large archives, so run it only when you are ready to spend those X API reads. In Bird-only mode, the command corrects the seeded local account identity from `bird whoami` without bulk-hydrating imported profiles:
 
 ```bash
 birdclaw import hydrate-profiles --json

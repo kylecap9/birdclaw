@@ -11,12 +11,17 @@ const mocks = vi.hoisted(() => ({
 	getTransportStatus: vi.fn(),
 	lookupAuthenticatedUser: vi.fn(),
 	lookupUsersByIds: vi.fn(),
+	getAuthenticatedBirdAccount: vi.fn(),
 }));
 
 vi.mock("./xurl", () => ({
 	getTransportStatus: mocks.getTransportStatus,
 	lookupAuthenticatedUser: mocks.lookupAuthenticatedUser,
 	lookupUsersByIds: mocks.lookupUsersByIds,
+}));
+
+vi.mock("./bird", () => ({
+	getAuthenticatedBirdAccount: mocks.getAuthenticatedBirdAccount,
 }));
 
 describe("profile hydration", () => {
@@ -30,6 +35,10 @@ describe("profile hydration", () => {
 		mocks.getTransportStatus.mockReset();
 		mocks.lookupAuthenticatedUser.mockReset();
 		mocks.lookupUsersByIds.mockReset();
+		mocks.getAuthenticatedBirdAccount.mockReset();
+		mocks.getAuthenticatedBirdAccount.mockRejectedValue(
+			new Error("bird unavailable"),
+		);
 	});
 
 	afterEach(() => {
@@ -225,6 +234,216 @@ describe("profile hydration", () => {
 			reason: "xurl missing",
 		});
 		expect(mocks.lookupUsersByIds).not.toHaveBeenCalled();
+	});
+
+	it("hydrates the account handle from bird when xurl is unavailable", async () => {
+		const db = getNativeDb();
+		db.exec(`
+      delete from profiles;
+      delete from accounts;
+    `);
+		db.prepare(
+			"insert into accounts (id, name, handle, external_user_id, transport, is_default, created_at) values ('acct_primary', 'Peter', '@steipete', '25401953', 'xurl', 1, '2009-03-19T22:54:05.000Z')",
+		).run();
+		db.prepare(
+			"insert into profiles (id, handle, display_name, bio, followers_count, avatar_hue, avatar_url, created_at) values ('profile_me', 'steipete', 'Peter', '', 0, 18, 'https://example.com/steipete.png', '2009-03-19T22:54:05.000Z')",
+		).run();
+
+		mocks.getTransportStatus.mockResolvedValue({
+			availableTransport: "local",
+			installed: true,
+			statusText:
+				"xurl installed but not authenticated. local (bird) mode active.",
+		});
+		mocks.getAuthenticatedBirdAccount.mockResolvedValue({
+			username: "realuser",
+			id: "987654321",
+			name: "Real User",
+		});
+
+		const { hydrateProfilesFromX } = await import("./profile-hydration");
+		await expect(hydrateProfilesFromX()).resolves.toMatchObject({
+			hydratedProfiles: 0,
+			hydratedAccount: true,
+		});
+
+		const account = db
+			.prepare(
+				"select handle, name, transport, external_user_id from accounts where id = 'acct_primary'",
+			)
+			.get() as {
+			handle: string;
+			name: string;
+			transport: string;
+			external_user_id: string | null;
+		};
+		expect(account.handle).toBe("@realuser");
+		expect(account.name).toBe("Real User");
+		expect(account.transport).toBe("bird");
+		expect(account.external_user_id).toBe("987654321");
+		const profile = db
+			.prepare(
+				"select handle, display_name, avatar_url from profiles where id = 'profile_me'",
+			)
+			.get() as {
+			handle: string;
+			display_name: string;
+			avatar_url: string | null;
+		};
+		expect(profile.handle).toBe("realuser");
+		expect(profile.display_name).toBe("Real User");
+		expect(profile.avatar_url).toBeNull();
+		expect(mocks.lookupUsersByIds).not.toHaveBeenCalled();
+	});
+
+	it("clears stale id and avatar when bird returns a changed handle without an id", async () => {
+		const db = getNativeDb();
+		db.exec(`
+      delete from profiles;
+      delete from accounts;
+    `);
+		db.prepare(
+			"insert into accounts (id, name, handle, external_user_id, transport, is_default, created_at) values ('acct_primary', 'Peter', '@steipete', '25401953', 'xurl', 1, '2009-03-19T22:54:05.000Z')",
+		).run();
+		db.prepare(
+			"insert into profiles (id, handle, display_name, bio, followers_count, avatar_hue, avatar_url, created_at) values ('profile_me', 'steipete', 'Peter', '', 0, 18, 'https://example.com/steipete.png', '2009-03-19T22:54:05.000Z')",
+		).run();
+
+		mocks.getTransportStatus.mockResolvedValue({
+			availableTransport: "local",
+			installed: true,
+			statusText:
+				"xurl installed but not authenticated. local (bird) mode active.",
+		});
+		// bird whoami reports a different handle but no numeric id.
+		mocks.getAuthenticatedBirdAccount.mockResolvedValue({
+			username: "someoneelse",
+			name: "Someone Else",
+		});
+
+		const { hydrateProfilesFromX } = await import("./profile-hydration");
+		await expect(hydrateProfilesFromX()).resolves.toMatchObject({
+			hydratedProfiles: 0,
+			hydratedAccount: true,
+		});
+
+		const account = db
+			.prepare(
+				"select handle, name, external_user_id from accounts where id = 'acct_primary'",
+			)
+			.get() as {
+			handle: string;
+			name: string;
+			external_user_id: string | null;
+		};
+		expect(account.handle).toBe("@someoneelse");
+		expect(account.name).toBe("Someone Else");
+		// The previous account's id must not linger on a changed handle.
+		expect(account.external_user_id).toBeNull();
+		const profile = db
+			.prepare(
+				"select handle, avatar_url from profiles where id = 'profile_me'",
+			)
+			.get() as { handle: string; avatar_url: string | null };
+		expect(profile.handle).toBe("someoneelse");
+		expect(profile.avatar_url).toBeNull();
+	});
+
+	it("refuses to relabel an archive-verified account from a different bird identity", async () => {
+		const db = getNativeDb();
+		db.exec(`
+      delete from profiles;
+      delete from accounts;
+    `);
+		db.prepare(
+			"insert into accounts (id, name, handle, external_user_id, transport, is_default, created_at) values ('acct_primary', 'Archive User', '@archiveuser', '111111111', 'archive', 1, '2009-03-19T22:54:05.000Z')",
+		).run();
+		db.prepare(
+			"insert into profiles (id, handle, display_name, bio, followers_count, avatar_hue, avatar_url, created_at) values ('profile_me', 'archiveuser', 'Archive User', '', 0, 18, 'https://example.com/archive.png', '2009-03-19T22:54:05.000Z')",
+		).run();
+
+		mocks.getTransportStatus.mockResolvedValue({
+			availableTransport: "local",
+			installed: true,
+			statusText:
+				"xurl installed but not authenticated. local (bird) mode active.",
+		});
+		mocks.getAuthenticatedBirdAccount.mockResolvedValue({
+			username: "differentuser",
+			id: "222222222",
+			name: "Different User",
+		});
+
+		const { hydrateProfilesFromX } = await import("./profile-hydration");
+		await expect(hydrateProfilesFromX()).resolves.toMatchObject({
+			hydratedProfiles: 0,
+			hydratedAccount: false,
+		});
+
+		const account = db
+			.prepare(
+				"select handle, name, external_user_id, transport from accounts where id = 'acct_primary'",
+			)
+			.get();
+		expect(account).toEqual({
+			handle: "@archiveuser",
+			name: "Archive User",
+			external_user_id: "111111111",
+			transport: "archive",
+		});
+		const profile = db
+			.prepare(
+				"select handle, display_name, avatar_url from profiles where id = 'profile_me'",
+			)
+			.get();
+		expect(profile).toEqual({
+			handle: "archiveuser",
+			display_name: "Archive User",
+			avatar_url: "https://example.com/archive.png",
+		});
+	});
+
+	it("preserves the stored id and avatar when the handle is unchanged", async () => {
+		const db = getNativeDb();
+		db.exec(`
+      delete from profiles;
+      delete from accounts;
+    `);
+		db.prepare(
+			"insert into accounts (id, name, handle, external_user_id, transport, is_default, created_at) values ('acct_primary', 'Real User', '@realuser', '987654321', 'bird', 1, '2009-03-19T22:54:05.000Z')",
+		).run();
+		db.prepare(
+			"insert into profiles (id, handle, display_name, bio, followers_count, avatar_hue, avatar_url, created_at) values ('profile_me', 'realuser', 'Real User', '', 0, 18, 'https://example.com/realuser.png', '2009-03-19T22:54:05.000Z')",
+		).run();
+
+		mocks.getTransportStatus.mockResolvedValue({
+			availableTransport: "local",
+			installed: true,
+			statusText:
+				"xurl installed but not authenticated. local (bird) mode active.",
+		});
+		// Same handle, no id this run: existing id and avatar should survive.
+		mocks.getAuthenticatedBirdAccount.mockResolvedValue({
+			username: "realuser",
+			name: "Real User",
+		});
+
+		const { hydrateProfilesFromX } = await import("./profile-hydration");
+		await expect(hydrateProfilesFromX()).resolves.toMatchObject({
+			hydratedAccount: true,
+		});
+
+		const account = db
+			.prepare(
+				"select handle, external_user_id from accounts where id = 'acct_primary'",
+			)
+			.get() as { handle: string; external_user_id: string | null };
+		expect(account.handle).toBe("@realuser");
+		expect(account.external_user_id).toBe("987654321");
+		const profile = db
+			.prepare("select avatar_url from profiles where id = 'profile_me'")
+			.get() as { avatar_url: string | null };
+		expect(profile.avatar_url).toBe("https://example.com/realuser.png");
 	});
 
 	it("handles empty user batches and missing authenticated user", async () => {

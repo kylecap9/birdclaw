@@ -2,6 +2,10 @@
 
 ## 0.9.1 - Unreleased
 
+### Fixed
+
+- Correct the seeded local account handle, display name, user ID, and stale avatar from the authenticated Bird identity during explicit profile hydration. (#88 - thanks @martintrojer)
+
 ## 0.9.0 - 2026-07-02
 
 ### Added
