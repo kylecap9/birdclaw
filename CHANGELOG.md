@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## 0.9.2 - Unreleased
+## 0.9.2 - 2026-07-04
 
 ### Fixed
 
