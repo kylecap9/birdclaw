@@ -2,6 +2,10 @@
 
 ## 0.9.3 - Unreleased
 
+### Changed
+
+- Modernize Effect usage across the transports: hidden 429 retries now run through a composed `Schedule` (capped exponential backoff, deadline- and abort-aware), transport/auth lookups are memoized with `Effect.cachedWithTTL`, xurl failures carry a typed `XurlCommandError` with structured rate-limit classification, link-preview DNS resolution uses `Effect.timeoutFail`, xurl/bird operations are traced `Effect.fn` spans, and live read paths call Effect transports directly instead of round-tripping through Promise wrappers.
+
 ## 0.9.2 - 2026-07-04
 
 ### Fixed
