@@ -2,6 +2,10 @@
 
 ## 0.9.5 - Unreleased
 
+### Fixed
+
+- Keep desktop sidebar labels visible by applying screen-reader-only styling only below the compact breakpoint. (#91 - thanks @MarkVillacampa)
+
 ## 0.9.4 - 2026-07-05
 
 ### Fixed

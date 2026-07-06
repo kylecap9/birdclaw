@@ -86,6 +86,19 @@ describe("AppNav", () => {
 		expect(accountSwitcher).toContainElement(themeButton);
 	});
 
+	it("only visually hides standard labels below the wide-sidebar breakpoint", () => {
+		render(
+			<ThemeProvider>
+				<AppNav />
+			</ThemeProvider>,
+		);
+
+		const inboxLabel = screen.getByText("Inbox");
+		expect(inboxLabel).toHaveClass("max-[1100px]:sr-only");
+		expect(inboxLabel).not.toHaveClass("sr-only");
+		expect(inboxLabel).not.toHaveClass("min-[1100px]:not-sr-only");
+	});
+
 	it("uses icon-rail chrome when compact", () => {
 		routerState.path = "/dms";
 		render(

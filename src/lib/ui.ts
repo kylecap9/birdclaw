@@ -43,7 +43,7 @@ export const navLinkActiveClass = "nav-link-active font-bold";
 
 export const navLinkIconClass = "shrink-0";
 
-export const navLinkLabelClass = "sr-only min-[1100px]:not-sr-only";
+export const navLinkLabelClass = "max-[1100px]:sr-only";
 
 export const navLinkLabelCompactClass = "sr-only";
 
