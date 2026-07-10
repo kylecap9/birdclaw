@@ -835,10 +835,10 @@ describe("Birdclaw MCP HTTP server", () => {
 			  source, raw_json, updated_at)
 			 values ('acct_primary', ?, 'home', ?, ?, 1, 'test', '{}', ?)`,
 		);
+		const createdAt = "2026-06-01T00:00:00.000Z";
 		const insertRange = db.transaction((start: number, end: number) => {
 			for (let index = start; index < end; index += 1) {
 				const id = `scoped_cap_${String(index).padStart(4, "0")}`;
-				const createdAt = `2026-06-01T00:${String(index % 60).padStart(2, "0")}:00.000Z`;
 				insertTweet.run(id, author.author_profile_id, createdAt);
 				insertFts.run(id);
 				insertEdge.run(id, createdAt, createdAt, createdAt);
@@ -869,6 +869,35 @@ describe("Birdclaw MCP HTTP server", () => {
 		});
 		expect(rejected.body.result).toMatchObject({ isError: true });
 		expect(JSON.stringify(rejected.body)).toContain("more than 1000");
+
+		expect(
+			toolTest.preflightFtsSearch(db, {
+				query: "scopedcapneedle",
+				accountId: "acct_primary",
+				resource: "home",
+				until: createdAt,
+				untilId: "scoped_cap_9999",
+				includeReplies: true,
+				likedOnly: false,
+				bookmarkedOnly: false,
+			}),
+		).toMatchObject({ scopedCount: 1_001 });
+		const cursorRejected = await rpc({
+			jsonrpc: "2.0",
+			id: 3,
+			method: "tools/call",
+			params: {
+				name: "search_tweets",
+				arguments: {
+					query: "scopedcapneedle",
+					until: createdAt,
+					untilId: "scoped_cap_9999",
+					limit: 1,
+				},
+			},
+		});
+		expect(cursorRejected.body.result).toMatchObject({ isError: true });
+		expect(JSON.stringify(cursorRejected.body)).toContain("more than 1000");
 	});
 
 	it("accepts exactly 10,000 global FTS candidates and rejects 10,001", async () => {

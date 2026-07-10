@@ -152,6 +152,7 @@ type SearchMatchScope = {
 	resource: "home" | "mentions" | "authored";
 	since?: string;
 	until?: string;
+	untilId?: string;
 	includeReplies: boolean;
 	likedOnly: boolean;
 	bookmarkedOnly: boolean;
@@ -176,6 +177,7 @@ function preflightFtsSearch(
 		resource,
 		since,
 		until,
+		untilId,
 		includeReplies,
 		likedOnly,
 		bookmarkedOnly,
@@ -223,8 +225,13 @@ function preflightFtsSearch(
 		params.push(since.trim());
 	}
 	if (until?.trim()) {
-		filters.push("t.created_at < ?");
-		params.push(until.trim());
+		if (untilId?.trim()) {
+			filters.push("(t.created_at < ? or (t.created_at = ? and t.id < ?))");
+			params.push(until.trim(), until.trim(), untilId.trim());
+		} else {
+			filters.push("t.created_at < ?");
+			params.push(until.trim());
+		}
 	}
 
 	const row = db
@@ -375,6 +382,7 @@ export function createBirdclawMcpServer({
 							resource,
 							since,
 							until,
+							untilId,
 							includeReplies,
 							likedOnly,
 							bookmarkedOnly,
