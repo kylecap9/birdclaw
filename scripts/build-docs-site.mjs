@@ -37,7 +37,7 @@ const sections = [
 		["search.md", "mentions.md", "dms.md", "inbox.md", "research.md"],
 	],
 	["Acting", ["compose.md", "moderation.md"]],
-	["Reference", ["cli.md", "data-architecture.md", "spec.md"]],
+	["Reference", ["mcp.md", "cli.md", "data-architecture.md", "spec.md"]],
 ];
 
 const buildExcludes = [];

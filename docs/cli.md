@@ -41,6 +41,9 @@ User config:
 - `BIRDCLAW_HOME`
 - `BIRDCLAW_CONFIG`
 - `BIRDCLAW_ACTIONS_TRANSPORT`
+- `BIRDCLAW_MCP_TOKEN`
+- `BIRDCLAW_MCP_PUBLIC_URL`
+- `BIRDCLAW_MCP_ACCOUNT`
 
 ## Command tree
 
@@ -750,6 +753,22 @@ enables local loopback web APIs without a token. `BIRDCLAW_HOST` and
 private proxy requires `BIRDCLAW_ALLOW_REMOTE_WEB=1`. To require an app-level
 token too, set `BIRDCLAW_WEB_TOKEN` and send it as `x-birdclaw-token` or a
 `birdclaw_token` cookie.
+
+The same process can expose an adapter-owned, read-only Streamable HTTP MCP
+endpoint at the exact path `/mcp`. Configure both `BIRDCLAW_MCP_TOKEN` and
+`BIRDCLAW_MCP_PUBLIC_URL`; the MCP token must be at least 32 bytes and must
+differ from `BIRDCLAW_WEB_TOKEN`. `BIRDCLAW_MCP_ACCOUNT` optionally selects one
+server-side account by id or handle; otherwise tools read the default account.
+
+When MCP is configured, startup validates the configuration, selected account,
+and an existing initialized database at the current schema. It does not create
+or migrate the database for MCP. Run `birdclaw init` or import/migrate with a
+trusted CLI command before starting the server.
+
+HTTP MCP URLs are accepted only for loopback hosts. External MCP URLs must use
+HTTPS on a dedicated hostname. Birdclaw reserves that configured hostname for
+MCP and denies every path except `/mcp`; the proxy and outer authentication
+policy must enforce the same rule. See the [MCP server guide](mcp.md).
 
 ### `graph summary`
 

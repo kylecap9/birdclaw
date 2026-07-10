@@ -78,7 +78,8 @@ Status: WIP. Real and usable. Not done. Expect schema churn, transport gaps, and
 - local-first by default
 - tests disable live writes
 - CI disables live writes
-- app has no auth layer because it is a local-only tool
+- local web access has no default auth layer; the optional MCP endpoint uses a
+  separate bearer token and still requires a loopback origin connection
 
 ### Runtime Architecture
 
@@ -275,6 +276,18 @@ local loopback web APIs without a token. Override the listener with `--host` and
 private proxy requires `BIRDCLAW_ALLOW_REMOTE_WEB=1`. To require an app-level
 token too, set `BIRDCLAW_WEB_TOKEN` and send it as `x-birdclaw-token` or a
 `birdclaw_token` cookie.
+
+The same process can expose a separate, read-only Streamable HTTP MCP endpoint
+at `/mcp`. It stays disabled until `BIRDCLAW_MCP_TOKEN` and the exact
+`BIRDCLAW_MCP_PUBLIC_URL` are configured. MCP can search cached tweets and read
+cached threads; it cannot access DMs, sync X, call OpenAI, write files, or invoke
+any compose/moderation API. The token must differ from `BIRDCLAW_WEB_TOKEN`.
+MCP reads the default account unless `BIRDCLAW_MCP_ACCOUNT` selects one account
+by id or handle. The origin remains loopback-only; external access requires a
+dedicated HTTPS hostname whose proxy and Cloudflare Access policy admit exactly
+`/mcp` and deny every other path. See the
+[MCP server guide](https://birdclaw.sh/mcp.html) for client and private-proxy
+configuration.
 
 Use the Sync button in Home, Mentions, Likes, Bookmarks, or DMs to run the matching live sync from the web UI and then reload the local view. Manual sync remains the default because live reads can be slow, auth-dependent, or rate-limited. Home and Mentions also offer opt-in per-account auto-sync at 5m, 10m, 15m, 30m, or 1h intervals; the browser pauses hidden-page runs, prevents overlap, and backs off after failures.
 

@@ -44,6 +44,7 @@ Stable `--json` envelopes go to stdout, progress and warnings to stderr — pipe
 - **Streaming AI digest** (OpenAI Responses API) for today, 24h, yesterday, or week, with DMs excluded unless explicitly enabled.
 - **Account-scoped moderation** with bulk blocklist import and a cookie-backed fallback when OAuth2 block writes get rejected.
 - **Git-friendly text backups** with yearly tweet shards and per-conversation DM shards — push the local SQLite truth into a private Git repo.
+- **Read-only MCP server** for secured agent access to locally cached tweet search and threads, without exposing DMs or write/live transports.
 
 ## Pick your path
 
@@ -55,6 +56,7 @@ Stable `--json` envelopes go to stdout, progress and warnings to stderr — pipe
 - **Maintaining a blocklist.** [Moderation](moderation.md) covers blocks, mutes, ban/unban, and bulk imports.
 - **Caching tweet media locally.** [Media](media.md) covers `media fetch` for images, video, and GIFs, plus archive-byte reuse.
 - **Backing up to Git.** [Backup](backup.md) for deterministic JSONL shards and `backup sync` round-trips.
+- **Connecting an agent.** [MCP server](mcp.md) covers the read-only tools, bearer boundary, and private-proxy deployment.
 - **Looking up a flag.** The [CLI reference](cli.md) lists every subcommand and option.
 
 ## Project

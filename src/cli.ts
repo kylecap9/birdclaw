@@ -57,7 +57,11 @@ registerComposeCommands(commandContext);
 registerInboxCommand(commandContext);
 registerGraphCommands(commandContext);
 registerStorageCommands(commandContext);
-registerServeCommand(commandContext, packageRoot);
+registerServeCommand(
+	commandContext,
+	packageRoot,
+	packageVersion.version ?? "0.0.0",
+);
 
 export async function runCli(argv = process.argv) {
 	try {
