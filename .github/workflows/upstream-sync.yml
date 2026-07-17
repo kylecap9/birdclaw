@@ -24,13 +24,12 @@ jobs:
   prepare-and-validate:
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    env:
-      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout fork history
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Resolve latest stable upstream release
         id: release
@@ -38,7 +37,6 @@ jobs:
         run: |
           set -euo pipefail
           release_json="$(curl --fail --silent --show-error \
-            --header "Authorization: Bearer ${GH_TOKEN}" \
             --header "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/steipete/birdclaw/releases/latest")"
           tag_name="$(node -e 'const fs=require("node:fs"); const r=JSON.parse(fs.readFileSync(0,"utf8")); if (!r.tag_name || r.draft || r.prerelease) process.exit(1); process.stdout.write(r.tag_name)' <<<"${release_json}")"
@@ -46,7 +44,7 @@ jobs:
           echo "tag_name=${tag_name}" >> "${GITHUB_OUTPUT}"
           echo "branch=automation/upstream-${safe_tag}" >> "${GITHUB_OUTPUT}"
 
-      - name: Fetch the signed release tag
+      - name: Fetch the exact release tag
         shell: bash
         run: |
           set -euo pipefail
@@ -68,6 +66,8 @@ jobs:
         if: steps.integrated.outputs.already != 'true'
         id: candidate
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           branch="${{ steps.release.outputs.branch }}"
@@ -99,6 +99,22 @@ jobs:
               gh issue comment "${existing}" --body-file "${body_file}"
             else
               gh issue create --title "${title}" --label upstream-sync-blocked --body-file "${body_file}"
+            fi
+            exit 1
+          fi
+          remote_sha="$(git ls-remote --heads origin "refs/heads/${branch}" | awk '{print $1}')"
+          local_sha="$(git rev-parse HEAD)"
+          if [[ -n "${remote_sha}" && "${remote_sha}" != "${local_sha}" ]]; then
+            title="Blocked upstream sync: candidate branch diverged for ${tag}"
+            body="The remote candidate branch \`${branch}\` does not match the freshly validated merge. No branch was updated and production was not changed."
+            gh label create upstream-sync-blocked \
+              --description "An upstream release needs manual conflict resolution" \
+              --color B60205 2>/dev/null || true
+            existing="$(gh issue list --state open --label upstream-sync-blocked --search "${title} in:title" --json number --jq '.[0].number // empty')"
+            if [[ -n "${existing}" ]]; then
+              gh issue comment "${existing}" --body "${body}"
+            else
+              gh issue create --title "${title}" --label upstream-sync-blocked --body "${body}"
             fi
             exit 1
           fi
@@ -145,10 +161,13 @@ jobs:
       - name: Publish audited candidate
         if: steps.integrated.outputs.already != 'true'
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           branch="${{ steps.release.outputs.branch }}"
           tag="${{ steps.release.outputs.tag_name }}"
+          gh auth setup-git
           git push --set-upstream origin "${branch}"
           existing="$(gh pr list --state open --head "${branch}" --json number --jq '.[0].number // empty')"
           if [[ -z "${existing}" ]]; then

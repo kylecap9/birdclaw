@@ -45,5 +45,9 @@ describe("upstream release automation", () => {
 	it("does not expose repository or production secrets", () => {
 		expect(workflow).not.toContain("secrets.");
 		expect(workflow).toContain('BIRDCLAW_DISABLE_LIVE_WRITES: "1"');
+		expect(workflow).toContain("persist-credentials: false");
+		expect(workflow).not.toMatch(
+			/jobs:\n\s+prepare-and-validate:\n(?:.*\n){0,5}\s+env:\n\s+GH_TOKEN:/,
+		);
 	});
 });
