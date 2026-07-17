@@ -1,0 +1,160 @@
+name: Upstream Release Sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 9 * * *"
+
+concurrency:
+  group: upstream-release-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+env:
+  CI: "true"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  BIRDCLAW_DISABLE_LIVE_WRITES: "1"
+  UPSTREAM_REPOSITORY: steipete/birdclaw
+
+jobs:
+  prepare-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout fork history
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve latest stable upstream release
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_json="$(curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/steipete/birdclaw/releases/latest")"
+          tag_name="$(node -e 'const fs=require("node:fs"); const r=JSON.parse(fs.readFileSync(0,"utf8")); if (!r.tag_name || r.draft || r.prerelease) process.exit(1); process.stdout.write(r.tag_name)' <<<"${release_json}")"
+          safe_tag="${tag_name//[^A-Za-z0-9._-]/-}"
+          echo "tag_name=${tag_name}" >> "${GITHUB_OUTPUT}"
+          echo "branch=automation/upstream-${safe_tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Fetch the signed release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          git fetch --no-tags upstream "refs/tags/${{ steps.release.outputs.tag_name }}:refs/tags/${{ steps.release.outputs.tag_name }}"
+
+      - name: Stop when the release is already integrated
+        id: integrated
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git merge-base --is-ancestor "${{ steps.release.outputs.tag_name }}" HEAD; then
+            echo "already=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "already=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Create release candidate
+        if: steps.integrated.outputs.already != 'true'
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch="${{ steps.release.outputs.branch }}"
+          tag="${{ steps.release.outputs.tag_name }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "${branch}"
+          if ! git merge --no-ff --no-edit "${tag}"; then
+            conflicts="$(git diff --name-only --diff-filter=U | sed '/^$/d')"
+            git merge --abort
+            title="Blocked upstream sync: ${tag}"
+            body_file="$(mktemp)"
+            {
+              echo "The guarded upstream release sync could not merge \`${tag}\` into \`main\`."
+              echo
+              echo "Conflicting paths:"
+              echo '```text'
+              printf '%s\n' "${conflicts:-unknown}"
+              echo '```'
+              echo
+              echo "No candidate branch was pushed and production was not changed."
+              echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            } > "${body_file}"
+            gh label create upstream-sync-blocked \
+              --description "An upstream release needs manual conflict resolution" \
+              --color B60205 2>/dev/null || true
+            existing="$(gh issue list --state open --label upstream-sync-blocked --search "${title} in:title" --json number --jq '.[0].number // empty')"
+            if [[ -n "${existing}" ]]; then
+              gh issue comment "${existing}" --body-file "${body_file}"
+            else
+              gh issue create --title "${title}" --label upstream-sync-blocked --body-file "${body_file}"
+            fi
+            exit 1
+          fi
+
+      - name: Setup pnpm
+        if: steps.integrated.outputs.already != 'true'
+        uses: pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a # v6
+
+      - name: Setup Node.js
+        if: steps.integrated.outputs.already != 'true'
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version-file: .node-version
+          cache: "pnpm"
+
+      - name: Install dependencies
+        if: steps.integrated.outputs.already != 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Format, lint, and type checks
+        if: steps.integrated.outputs.already != 'true'
+        run: pnpm check
+
+      - name: Unit tests with coverage
+        if: steps.integrated.outputs.already != 'true'
+        run: pnpm coverage
+
+      - name: Build
+        if: steps.integrated.outputs.already != 'true'
+        run: pnpm build
+
+      - name: Installed package smoke test
+        if: steps.integrated.outputs.already != 'true'
+        run: pnpm pack:smoke
+
+      - name: Install Playwright browsers
+        if: steps.integrated.outputs.already != 'true'
+        run: pnpm exec playwright install chromium --with-deps
+
+      - name: End-to-end tests
+        if: steps.integrated.outputs.already != 'true'
+        run: pnpm e2e
+
+      - name: Publish audited candidate
+        if: steps.integrated.outputs.already != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch="${{ steps.release.outputs.branch }}"
+          tag="${{ steps.release.outputs.tag_name }}"
+          git push --set-upstream origin "${branch}"
+          existing="$(gh pr list --state open --head "${branch}" --json number --jq '.[0].number // empty')"
+          if [[ -z "${existing}" ]]; then
+            gh pr create \
+              --base main \
+              --head "${branch}" \
+              --title "chore: sync upstream ${tag}" \
+              --body "Automated candidate for upstream release \`${tag}\`. The complete repository gate passed with live writes disabled. Production deployment remains downstream and fail-closed."
+          fi
