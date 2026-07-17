@@ -143,6 +143,8 @@ export interface EmbeddedTweet {
 	author: ProfileRecord;
 	entities: TweetEntities;
 	media: TweetMediaItem[];
+	// Embedded quote tweet (one level), so comments can render an embed card like the feed does.
+	quotedTweet?: EmbeddedTweet | null;
 }
 
 export interface TweetConversation {
@@ -339,8 +341,12 @@ export interface DmConversationItem {
 }
 
 export interface TimelineQuery {
-	resource: Exclude<ResourceKind, "dms">;
+	// "ai" is an internal Command Center lane (curated AI feed via the "ai" edge), not a public
+	// query resource — kept out of the public resourceKindSchema on purpose.
+	resource: Exclude<ResourceKind, "dms"> | "ai";
 	account?: string;
+	listAccountId?: string;
+	listId?: string;
 	search?: string;
 	replyFilter?: ReplyFilter;
 	since?: string;
@@ -591,8 +597,12 @@ export interface ProfileRepliesResponse {
 
 export interface XurlMentionsResponse {
 	data: XurlMentionData[];
+	// Referenced tweets inlined by the source (e.g. bird's quoted/retweeted tweets) — ingested
+	// edge-less so they land in the store for embed rendering without entering any feed lane.
+	embedded?: XurlMentionData[];
 	includes?: {
 		users?: XurlMentionUser[];
+		tweets?: XurlTweetData[];
 		media?: XurlMediaItem[];
 	};
 	meta?: Record<string, unknown>;
@@ -623,6 +633,7 @@ export interface XurlTweetsResponse {
 	data: XurlTweetData[];
 	includes?: {
 		users?: XurlMentionUser[];
+		tweets?: XurlTweetData[];
 		media?: XurlMediaItem[];
 	};
 	meta?: Record<string, unknown>;
@@ -631,6 +642,28 @@ export interface XurlTweetsResponse {
 export interface XurlFollowUsersResponse {
 	data: XurlMentionUser[];
 	meta?: Record<string, unknown>;
+}
+
+export interface XListRecord {
+	id: string;
+	name: string;
+	description?: string;
+	memberCount?: number;
+	followerCount?: number;
+	isPrivate?: boolean;
+	ownerId?: string;
+	ownerUsername?: string;
+	ownerName?: string;
+	createdAt?: string;
+	raw?: Record<string, unknown>;
+}
+
+export interface XListPage {
+	data: XListRecord[];
+	meta: {
+		result_count: number;
+		next_token?: string | null;
+	};
 }
 
 export interface FollowGraphProfile {

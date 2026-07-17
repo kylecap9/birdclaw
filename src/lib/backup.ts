@@ -11,6 +11,7 @@ import {
 	buildBackupShardsFromRowSets,
 	countBackupFiles,
 	createBackupImportRows,
+	logicalBackupShardPath,
 	type BackupImportRows,
 	type BackupJsonRecord as JsonRecord,
 	type BackupJsonValue as JsonValue,
@@ -26,10 +27,12 @@ import {
 } from "./streaming-ingestion";
 import { runSubprocessEffect, SubprocessError } from "./subprocess";
 
-const BACKUP_SCHEMA_VERSION = 2;
+const BACKUP_SCHEMA_VERSION = 4;
 const MIN_SUPPORTED_BACKUP_SCHEMA_VERSION = 1;
+const DEFAULT_MAX_BACKUP_SHARD_BYTES = 48 * 1024 * 1024;
 const MANIFEST_PATH = "manifest.json";
 const DATA_DIR = "data";
+const GITATTRIBUTES_PATH = ".gitattributes";
 const AUTO_SYNC_CACHE_KEY = "backup:auto-sync";
 const DEFAULT_STALE_AFTER_SECONDS = 15 * 60;
 let autoUpdateInFlight: Promise<BackupAutoUpdateResult> | null = null;
@@ -244,6 +247,57 @@ function buildShards(db: Database) {
 	return buildBackupShardsFromRowSets(getExportRowSets(db));
 }
 
+function normalizeMaxBackupShardBytes(value: number | undefined) {
+	const maxBytes = value ?? DEFAULT_MAX_BACKUP_SHARD_BYTES;
+	if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+		throw new Error("Backup shard byte limit must be a positive integer");
+	}
+	return maxBytes;
+}
+
+function partPath(relativePath: string, partNumber: number) {
+	if (!relativePath.endsWith(".jsonl")) {
+		throw new Error(`Backup shard path must end in .jsonl: ${relativePath}`);
+	}
+	return relativePath.replace(
+		/\.jsonl$/u,
+		`.part-${String(partNumber).padStart(4, "0")}.jsonl`,
+	);
+}
+
+function splitJsonlShard(
+	relativePath: string,
+	rows: JsonRecord[],
+	maxBytes: number,
+) {
+	const parts: JsonRecord[][] = [];
+	let currentRows: JsonRecord[] = [];
+	let currentBytes = 0;
+	for (const [index, row] of rows.entries()) {
+		const rowBytes = Buffer.byteLength(jsonlStringify(row)) + 1;
+		if (rowBytes > maxBytes) {
+			throw new Error(
+				`Backup row exceeds shard byte limit: ${relativePath}:${index + 1} is ${rowBytes} bytes (limit ${maxBytes})`,
+			);
+		}
+		if (currentRows.length > 0 && currentBytes + rowBytes > maxBytes) {
+			parts.push(currentRows);
+			currentRows = [];
+			currentBytes = 0;
+		}
+		currentRows.push(row);
+		currentBytes += rowBytes;
+	}
+	if (currentRows.length > 0) parts.push(currentRows);
+	if (parts.length <= 1) {
+		return [{ relativePath, rows: parts[0] ?? [] }];
+	}
+	return parts.map((partRows, index) => ({
+		relativePath: partPath(relativePath, index + 1),
+		rows: partRows,
+	}));
+}
+
 function writeJsonlFileEffect(
 	repoPath: string,
 	relativePath: string,
@@ -394,10 +448,13 @@ data/moderation/mutes.jsonl
 data/follow_snapshots.jsonl
 data/follow_snapshot_members.jsonl
 data/follow_edges.jsonl
+data/lists/lists.jsonl
+data/lists/members.jsonl
 data/follow_events.jsonl
 \`\`\`
 
 Tweets are sharded by creation year. Collection-only tweets whose creation date is unknown live in \`data/tweets/unknown.jsonl\`. Timeline edges keep account-scoped home/mention membership separate from canonical tweet content. DMs are sharded by year and keep \`conversation_id\` in each row.
+Logical shards larger than 48 MiB are split into deterministic \`.part-0001.jsonl\` files so ordinary Git hosting remains usable without Git LFS.
 The links shard stores expanded short URLs and their source tweet/DM occurrences so linked-tweet search can be rebuilt without re-expanding every \`t.co\` URL.
 
 Never commit live tokens, browser cookies, raw SQLite WAL/SHM sidecars, or temporary cache files here.
@@ -438,6 +495,40 @@ function readPreviousManifestEffect(
 	);
 }
 
+function ensureBackupGitattributesEffect(repoPath: string) {
+	return Effect.gen(function* () {
+		const attributesPath = yield* trySync(() =>
+			resolveBackupFilePath(repoPath, GITATTRIBUTES_PATH),
+		);
+		yield* assertNoSymlinkAncestorEffect(repoPath, attributesPath);
+		const requiredLines = [
+			"data/**/*.jsonl text eol=lf",
+			`${MANIFEST_PATH} text eol=lf`,
+		];
+		const generatedBlock = [
+			"# BEGIN birdclaw backup attributes",
+			"# Backup hashes use the raw LF-delimited bytes written by Birdclaw.",
+			...requiredLines,
+			"# END birdclaw backup attributes",
+			"",
+		].join("\n");
+		const current = yield* tryPromise(() =>
+			fs.readFile(attributesPath, "utf8"),
+		).pipe(Effect.option);
+		if (current._tag === "Some" && current.value.endsWith(generatedBlock)) {
+			return;
+		}
+		const preserved =
+			current._tag === "Some"
+				? current.value.replaceAll(generatedBlock, "").replace(/[\r\n]+$/u, "")
+				: "";
+		const content = preserved
+			? `${preserved}\n\n${generatedBlock}`
+			: generatedBlock;
+		yield* tryPromise(() => fs.writeFile(attributesPath, content, "utf8"));
+	});
+}
+
 function maybeCommitAndPushEffect({
 	repoPath,
 	message,
@@ -454,21 +545,22 @@ function maybeCommitAndPushEffect({
 	}
 
 	return Effect.gen(function* () {
-		yield* gitEffect([
-			"-C",
-			repoPath,
-			"rev-parse",
-			"--is-inside-work-tree",
-		]).pipe(
-			Effect.catchAll(() =>
-				gitEffect(["-C", repoPath, "init"]).pipe(Effect.asVoid),
-			),
-		);
+		if (!(yield* isGitRepoEffect(repoPath))) {
+			yield* gitEffect(["-C", repoPath, "init"]);
+		}
+		if (!(yield* isGitRepoEffect(repoPath))) {
+			return yield* Effect.fail(
+				new Error(
+					"Backup Git operations must run at the configured repository root",
+				),
+			);
+		}
 
 		yield* gitEffect([
 			"-C",
 			repoPath,
 			"add",
+			GITATTRIBUTES_PATH,
 			"README.md",
 			MANIFEST_PATH,
 			DATA_DIR,
@@ -541,6 +633,9 @@ function maybeCommitAndPushEffect({
 }
 
 function isGitRepoEffect(repoPath: string) {
+	if (!existsSync(path.join(repoPath, ".git"))) {
+		return Effect.succeed(false);
+	}
 	return gitEffect(["-C", repoPath, "rev-parse", "--is-inside-work-tree"]).pipe(
 		Effect.as(true),
 		Effect.catchAll(() => Effect.succeed(false)),
@@ -604,7 +699,7 @@ function ensureBackupGitRepoEffect({
 				repoPath,
 				"fetch",
 				"origin",
-				"main",
+				"main:refs/remotes/origin/main",
 			]).pipe(
 				Effect.flatMap(() =>
 					gitEffect(["-C", repoPath, "checkout", "-B", "main", "origin/main"]),
@@ -648,6 +743,7 @@ export function exportBackupEffect({
 	push = false,
 	message = "archive: update birdclaw backup",
 	validate = true,
+	maxShardBytes,
 }: {
 	repoPath: string;
 	db?: Database;
@@ -655,6 +751,7 @@ export function exportBackupEffect({
 	push?: boolean;
 	message?: string;
 	validate?: boolean;
+	maxShardBytes?: number;
 }): Effect.Effect<BackupExportResult, unknown> {
 	return Effect.gen(function* () {
 		const resolvedRepoPath = yield* trySync(() => path.resolve(repoPath));
@@ -667,22 +764,31 @@ export function exportBackupEffect({
 				new Error("Backup repository path must be a real directory"),
 			);
 		}
+		yield* ensureBackupGitattributesEffect(resolvedRepoPath);
 		yield* ensureBackupReadmeEffect(resolvedRepoPath);
 
+		const maxBytes = yield* trySync(() =>
+			normalizeMaxBackupShardBytes(maxShardBytes),
+		);
 		const shards = yield* trySync(() => buildShards(database));
 		const shardEntries = yield* trySync(() =>
 			[...shards.entries()].sort(([left], [right]) =>
 				left.localeCompare(right),
 			),
 		);
+		const shardParts = yield* trySync(() =>
+			shardEntries.flatMap(([relativePath, rows]) =>
+				splitJsonlShard(relativePath, rows, maxBytes),
+			),
+		);
 		const expectedPaths = yield* trySync(
-			() => new Set(shardEntries.map(([relativePath]) => relativePath)),
+			() => new Set(shardParts.map(({ relativePath }) => relativePath)),
 		);
 		const files = yield* Effect.forEach(
-			shardEntries,
-			([relativePath, rows]) =>
+			shardParts,
+			({ relativePath, rows }) =>
 				writeJsonlFileEffect(resolvedRepoPath, relativePath, rows),
-			{ concurrency: "unbounded" },
+			{ concurrency: 1 },
 		);
 		yield* removeStaleBackupFilesEffect(resolvedRepoPath, expectedPaths);
 
@@ -932,7 +1038,7 @@ function rowsForManifestPath(
 ) {
 	return manifest.files
 		.map((file) => file.path)
-		.filter(predicate)
+		.filter((relativePath) => predicate(logicalBackupShardPath(relativePath)))
 		.sort();
 }
 
@@ -1517,7 +1623,7 @@ export function validateBackupEffect(
 					}
 					return { file, errors: fileErrors };
 				}),
-			{ concurrency: "unbounded" },
+			{ concurrency: 1 },
 		);
 
 		const files: BackupFileManifest[] = [];

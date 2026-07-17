@@ -5,6 +5,7 @@ import {
 	existsSync,
 	mkdirSync,
 	readFileSync,
+	realpathSync,
 	rmSync,
 	symlinkSync,
 	writeFileSync,
@@ -583,7 +584,7 @@ describe("text backup", () => {
 		expect(validation.ok).toBe(true);
 	}, 20000);
 
-	it("emits byte-identical schema-v2 data and hashes for the same database", async () => {
+	it("emits byte-identical schema-v4 data and hashes for the same database", async () => {
 		switchHome("birdclaw-backup-stable-src-");
 		seedBackupFixture();
 		const firstRepoPath = makeTempDir("birdclaw-backup-stable-first-");
@@ -592,7 +593,7 @@ describe("text backup", () => {
 		const first = await exportBackup({ repoPath: firstRepoPath });
 		const second = await exportBackup({ repoPath: secondRepoPath });
 
-		expect(first.manifest.schemaVersion).toBe(2);
+		expect(first.manifest.schemaVersion).toBe(4);
 		expect(first.manifest.backupHash).toBe(
 			"bec137fa89f0f39cef137e8e74dfc59a7a892972189019c7d5e841f9c4c17895",
 		);
@@ -604,6 +605,37 @@ describe("text backup", () => {
 				readFileSync(path.join(firstRepoPath, file.path)),
 			);
 		}
+	}, 20000);
+
+	it("splits oversized logical shards into deterministic bounded part files", async () => {
+		switchHome("birdclaw-backup-parts-src-");
+		seedBackupFixture();
+		const db = getNativeDb();
+		const largeRawJson = JSON.stringify({ blob: "x".repeat(700_000) });
+		db.prepare("update profiles set raw_json = ?").run(largeRawJson);
+		const before = getBackupDatabaseFingerprint();
+		const repoPath = makeTempDir("birdclaw-backup-parts-store-");
+
+		const exported = await exportBackup({
+			repoPath,
+			maxShardBytes: 1_000_000,
+		});
+		const profileFiles = exported.manifest.files.filter((file) =>
+			file.path.startsWith("data/profiles.part-"),
+		);
+
+		expect(profileFiles.map((file) => file.path)).toEqual([
+			"data/profiles.part-0001.jsonl",
+			"data/profiles.part-0002.jsonl",
+		]);
+		expect(profileFiles.every((file) => file.bytes <= 1_000_000)).toBe(true);
+		expect(profileFiles.reduce((sum, file) => sum + file.rows, 0)).toBe(2);
+		expect(existsSync(path.join(repoPath, "data/profiles.jsonl"))).toBe(false);
+		expect(exported.validation.ok).toBe(true);
+
+		switchHome("birdclaw-backup-parts-dst-");
+		const imported = await importBackup({ repoPath, mode: "replace" });
+		expect(imported.fingerprint).toEqual(before);
 	}, 20000);
 
 	it("does not downgrade a fresh DM request when merging a stale backup", async () => {
@@ -748,6 +780,83 @@ describe("text backup", () => {
 				{ encoding: "utf8" },
 			).trim(),
 		).toBe("1");
+		expect(
+			execFileSync(
+				"git",
+				[
+					"-C",
+					secondRepoPath,
+					"show-ref",
+					"--verify",
+					"refs/remotes/origin/main",
+				],
+				{ encoding: "utf8" },
+			).trim(),
+		).toContain("refs/remotes/origin/main");
+	}, 20000);
+
+	it("isolates backup commits from an enclosing Git worktree", async () => {
+		const parentPath = makeTempDir("birdclaw-parent-worktree-");
+		execFileSync("git", ["-C", parentPath, "init"]);
+		const repoPath = path.join(parentPath, "backup");
+		mkdirSync(repoPath);
+		writeFileSync(
+			path.join(repoPath, ".gitattributes"),
+			"*.md text eol=lf\ndata/**/*.jsonl text eol=crlf\n",
+		);
+		switchHome("birdclaw-nested-backup-");
+		seedBackupFixture();
+
+		const result = await exportBackup({ repoPath, commit: true });
+
+		expect(result.git?.committed).toBe(true);
+		expect(
+			execFileSync("git", ["-C", repoPath, "rev-parse", "--show-toplevel"], {
+				encoding: "utf8",
+			}).trim(),
+		).toBe(realpathSync(repoPath));
+		expect(
+			execFileSync(
+				"git",
+				["-C", parentPath, "diff", "--cached", "--name-only"],
+				{
+					encoding: "utf8",
+				},
+			),
+		).toBe("");
+		expect(readFileSync(path.join(repoPath, ".gitattributes"), "utf8")).toBe(
+			[
+				"*.md text eol=lf",
+				"data/**/*.jsonl text eol=crlf",
+				"",
+				"# BEGIN birdclaw backup attributes",
+				"# Backup hashes use the raw LF-delimited bytes written by Birdclaw.",
+				"data/**/*.jsonl text eol=lf",
+				"manifest.json text eol=lf",
+				"# END birdclaw backup attributes",
+				"",
+			].join("\n"),
+		);
+		expect(
+			execFileSync("git", ["-C", repoPath, "ls-files", ".gitattributes"], {
+				encoding: "utf8",
+			}).trim(),
+		).toBe(".gitattributes");
+		expect(
+			execFileSync(
+				"git",
+				[
+					"-C",
+					repoPath,
+					"check-attr",
+					"eol",
+					"--",
+					"data/tweets/2026.jsonl",
+					"manifest.json",
+				],
+				{ encoding: "utf8" },
+			),
+		).toBe("data/tweets/2026.jsonl: eol: lf\nmanifest.json: eol: lf\n");
 	}, 20000);
 
 	it("does not inherit commit signing for generated backup commits", async () => {

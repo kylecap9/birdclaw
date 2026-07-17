@@ -6,7 +6,8 @@ export type TweetAccountEdgeKind =
 	| "authored"
 	| "search"
 	| "profile"
-	| "thread_context";
+	| "thread_context"
+	| "ai";
 
 export function upsertTweetAccountEdge(
 	db: Database,

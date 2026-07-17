@@ -6,19 +6,22 @@ import {
 	backupCodecForPath,
 	buildBackupShardsFromRowSets,
 	countBackupFiles,
+	logicalBackupShardPath,
 	type BackupTableCodec,
 } from "./backup-table-codecs";
 
 describe("backup table codecs", () => {
 	it("owns every portable table and path exactly once", () => {
 		expect(assertBackupTableCodecRegistry()).toBe(true);
-		expect(BACKUP_TABLE_CODECS).toHaveLength(20);
+		expect(BACKUP_TABLE_CODECS).toHaveLength(22);
 		expect(BACKUP_TABLE_CODECS.map((codec) => codec.name)).toEqual([
 			"accounts",
 			"profiles",
 			"profile_affiliations",
 			"profile_snapshots",
 			"profile_bio_entities",
+			"x_lists",
+			"x_list_members",
 			"tweets",
 			"tweet_collections",
 			"tweet_account_edges",
@@ -39,7 +42,7 @@ describe("backup table codecs", () => {
 			BACKUP_TABLE_CODECS.map((codec) => codec.merge.order).sort(
 				(left, right) => left - right,
 			),
-		).toEqual(Array.from({ length: 20 }, (_, index) => index));
+		).toEqual(Array.from({ length: 22 }, (_, index) => index));
 
 		const sample = { created_at: "2026-01-02T00:00:00.000Z", kind: "likes" };
 		for (const codec of BACKUP_TABLE_CODECS) {
@@ -85,6 +88,24 @@ describe("backup table codecs", () => {
 		expect(backupCodecForPath("data/synthetic/a.jsonl", [synthetic])).toBe(
 			synthetic,
 		);
+	});
+
+	it("routes deterministic part files through their logical shard codec", () => {
+		expect(logicalBackupShardPath("data/profiles.part-0001.jsonl")).toBe(
+			"data/profiles.jsonl",
+		);
+		expect(backupCodecForPath("data/profiles.part-0001.jsonl").name).toBe(
+			"profiles",
+		);
+		expect(backupCodecForPath("data/tweets/2026.part-0012.jsonl").name).toBe(
+			"tweets",
+		);
+		expect(
+			countBackupFiles([
+				{ path: "data/profiles.part-0001.jsonl", rows: 2 },
+				{ path: "data/profiles.part-0002.jsonl", rows: 3 },
+			]),
+		).toEqual({ profiles: 5 });
 	});
 
 	it("adapts schema-v1 tweet state at the registry boundary", () => {

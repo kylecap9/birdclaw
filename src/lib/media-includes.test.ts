@@ -159,6 +159,48 @@ describe("media includes mapping", () => {
 		expect(buildMediaJsonFromIncludes(tweet, [])).toBe("[]");
 	});
 
+	it("builds a playable video item from a bird video entity (not a static image)", () => {
+		const items = JSON.parse(
+			buildMediaJsonFromIncludes(
+				{
+					entities: {
+						urls: [
+							{
+								media_key: "bird_media_0",
+								url: "https://pbs.twimg.com/amplify_video_thumb/1/img/x.jpg",
+								mediaType: "video",
+								previewUrl:
+									"https://pbs.twimg.com/amplify_video_thumb/1/img/x.jpg:small",
+								videoUrl:
+									"https://video.twimg.com/amplify_video/1/vid/avc1/1310x680/y.mp4?tag=28",
+								width: 1310,
+								height: 680,
+								durationMs: 10041,
+							},
+						],
+					},
+				},
+				[],
+			),
+		);
+		expect(items).toEqual([
+			{
+				url: "https://pbs.twimg.com/amplify_video_thumb/1/img/x.jpg",
+				type: "video",
+				thumbnailUrl: "https://pbs.twimg.com/amplify_video_thumb/1/img/x.jpg",
+				variants: [
+					{
+						url: "https://video.twimg.com/amplify_video/1/vid/avc1/1310x680/y.mp4?tag=28",
+						contentType: "video/mp4",
+					},
+				],
+				width: 1310,
+				height: 680,
+				durationMs: 10041,
+			},
+		]);
+	});
+
 	it("accepts known media CDN entity fallback urls", () => {
 		expect(
 			JSON.parse(

@@ -10,6 +10,7 @@ birdclaw can write the canonical SQLite store as deterministic JSONL shards that
 ## Layout
 
 ```text
+.gitattributes
 manifest.json
 data/accounts.jsonl
 data/profiles.jsonl
@@ -28,6 +29,9 @@ data/follow_snapshots.jsonl
 data/follow_snapshot_members.jsonl
 data/follow_edges.jsonl
 data/follow_events.jsonl
+data/lists/lists.jsonl
+data/lists/members.jsonl
+data/<logical-shard>.part-NNNN.jsonl
 ```
 
 Design rules:
@@ -41,7 +45,10 @@ Design rules:
 - **profile snapshots** preserve deduplicated profile-history states for identity evidence over time
 - **profile bio entities** preserve extracted `@handle`, domain, and company-phrase identity hints, including inactive historical values
 - **follow graph** shards preserve followers/following snapshots, snapshot members, current edges, and append-only churn events
+- **X Lists** preserve owned-List freshness/completeness metadata and current/ended member edges
 - **no SQLite WAL/SHM, FTS shadow tables, or transient live cache rows** ever land in the backup
+- **line endings** for hashed JSONL and manifest files stay LF on every platform via the generated `.gitattributes`
+- **large logical shards** split deterministically into numbered parts capped at 48 MiB, keeping every Git blob below common hosted-repository limits without Git LFS
 
 The manifest pins per-shard byte counts, row counts, and SHA hashes. Validation walks every shard and verifies they line up.
 
@@ -62,6 +69,7 @@ Flags:
 - `--no-validate` — skip post-export validation (not recommended)
 
 The `data/` directory is fully rewritten on every export. Anything outside `data/` (your README, license, hooks) is left alone.
+Logical shards at or below 48 MiB keep their existing filename. Larger shards become files such as `data/profile_snapshots.part-0001.jsonl`; import and validation accept both layouts.
 
 ## `backup sync`
 
@@ -81,6 +89,8 @@ What `sync` does:
 3. merge-imports remote backup rows into local SQLite
 4. exports the local union back into deterministic text shards
 5. commits and pushes the backup repo
+
+Git operations are rooted at the configured `repoPath`. If that directory sits inside another worktree, Birdclaw initializes or uses a separate repository there instead of staging backup files into the enclosing project.
 
 This is what makes birdclaw safe across multiple machines: each machine can sync independently, and the merge step preserves rows that only one side has.
 

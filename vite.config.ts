@@ -21,6 +21,9 @@ const config = defineConfig({
 	resolve: {
 		tsconfigPaths: true,
 	},
+	ssr: {
+		noExternal: ["h3-v2", "rou3", "srvx"],
+	},
 	server: {
 		allowedHosts: ["clawmac.sheep-coho.ts.net", ...extraAllowedHosts],
 	},
