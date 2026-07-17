@@ -26,6 +26,7 @@ Status: WIP. Real and usable. Not done. Expect schema churn, transport gaps, and
 - archive import streams bundled media files into the local originals cache and extracts `video_info.variants[]` for video and animated-GIF rows
 - live authored sync through `xurl`, plus likes and bookmarks through `xurl` or `bird`
 - cache-first followers/following sync through `bird` or `xurl`
+- explicit owned X List and membership sync through `bird` or `xurl`, with durable completeness metadata
 - local follow graph queries for top followers, unfollows, mutuals, and non-mutual following
 - Git-friendly text backups with yearly tweet shards and per-conversation DM shards
 - profile hydration from live Twitter metadata
@@ -57,6 +58,7 @@ Status: WIP. Real and usable. Not done. Expect schema churn, transport gaps, and
 - OpenAI scoring hook for low-signal filtering
 - cached live mentions export in `xurl`-compatible JSON
 - liked/bookmarked tweet filters for archive and live-synced collections
+- local tweet search scoped to cached X List membership by name or id
 - live profile-reply inspection for borderline AI/slop triage
 - one-shot blocklist import from a file for batch moderation passes
 
@@ -80,7 +82,7 @@ Status: WIP. Real and usable. Not done. Expect schema churn, transport gaps, and
 
 ### Runtime Architecture
 
-Birdclaw uses [Effect](https://effect.website/) for new and migrated I/O-heavy internals. The current Effect boundary covers browser API fetches, web sync orchestration, sync-job polling, `bird`/`xurl` subprocess helpers and public adapters, backup export/import/validation and Git orchestration, moderation action transport and target resolution, `bird` action/profile adapters, blocks/mutes write helpers, remote block sync, batch blocklist imports, authored/mentions/mention-thread sync including xurl recent-search and parent-walk fallback internals, conversation loading, home timeline, saved collection, DM live sync, profile hydration/resolution/affiliation/reply inspection, shared tweet lookup, research and whois report generation, follow graph live sync, link preview/index fetches, archive discovery/import subprocesses, avatar/URL caches, OpenAI/inbox scoring, scheduled bookmark sync locking/audit/launchd install, and the paced/concurrent `media fetch` archive-reuse and HTTP download pipeline.
+Birdclaw uses [Effect](https://effect.website/) for new and migrated I/O-heavy internals. The current Effect boundary covers browser API fetches, web sync orchestration, sync-job polling, `bird`/`xurl` subprocess helpers and public adapters, backup export/import/validation and Git orchestration, moderation action transport and target resolution, `bird` action/profile adapters, blocks/mutes write helpers, remote block sync, batch blocklist imports, authored/mentions/mention-thread sync including xurl recent-search and parent-walk fallback internals, conversation loading, home timeline, saved collection, X List membership, DM live sync, profile hydration/resolution/affiliation/reply inspection, shared tweet lookup, research and whois report generation, follow graph live sync, link preview/index fetches, archive discovery/import subprocesses, avatar/URL caches, OpenAI/inbox scoring, scheduled bookmark sync locking/audit/launchd install, and the paced/concurrent `media fetch` archive-reuse and HTTP download pipeline.
 
 Public CLI and React call sites still expose plain `Promise` wrappers where that keeps the surrounding framework code simple. New core code should prefer `Effect` programs with typed error values, then add a Promise wrapper only at the outer CLI, route, or component boundary.
 
@@ -231,7 +233,7 @@ birdclaw import archive ~/Downloads/twitter-archive-2025.zip --json
 
 Don't have an archive yet? Request it from <https://x.com/settings/download_your_data>; X emails a download link when it is ready, which may take a few days. A fresh Birdclaw database needs the archive import to establish account identity before live sync. See [Archive Import → Get an archive](docs/archive.md#get-an-archive).
 
-Optional profile hydration can improve bios, follower counts, and avatars, but it performs live X profile reads and can spend API credits on large archives:
+Optional profile hydration through xurl can improve bios, follower counts, and avatars, but it performs live X profile reads and can spend API credits on large archives. In Bird-only mode, the command corrects the seeded local account identity from `bird whoami` without bulk-hydrating imported profiles:
 
 ```bash
 birdclaw import hydrate-profiles --json
@@ -274,7 +276,7 @@ private proxy requires `BIRDCLAW_ALLOW_REMOTE_WEB=1`. To require an app-level
 token too, set `BIRDCLAW_WEB_TOKEN` and send it as `x-birdclaw-token` or a
 `birdclaw_token` cookie.
 
-Use the Sync button in Home, Mentions, Likes, Bookmarks, or DMs to run the matching live sync from the web UI and then reload the local view. These controls are explicit because live reads can be slow, auth-dependent, or rate-limited.
+Use the Sync button in Home, Mentions, Likes, Bookmarks, or DMs to run the matching live sync from the web UI and then reload the local view. Manual sync remains the default because live reads can be slow, auth-dependent, or rate-limited. Home and Mentions also offer opt-in per-account auto-sync at 5m, 10m, 15m, 30m, or 1h intervals; the browser pauses hidden-page runs, prevents overlap, and backs off after failures.
 
 `BIRDCLAW_ALLOWED_HOSTS` applies only to the source `pnpm dev` server, not the
 built server started by `birdclaw serve`.
@@ -382,7 +384,23 @@ Notes:
 - `bird` mode uses your local `bird` CLI and caches its mentions output into birdclaw's canonical store
 - filters still work in `xurl` mode; filtered payloads are rebuilt from the local canonical store after sync
 - `sync authored`, `sync mentions`, `sync mention-threads`, `sync likes`, `sync bookmarks`, and `sync timeline` store live results in the canonical local store; per-account authored/home/mention/like/bookmark membership is kept as edges so shared tweets do not clobber account ownership
+- `sync lists` explicitly reads owned Lists and a bounded number of membership pages; the safe default is 20 members per List, one page, and one second between Lists
 - the web UI has explicit Sync buttons for home timeline, mentions, likes, bookmarks, and DMs; they call the same sync paths and then reload the local DB-backed view
+
+### X Lists
+
+List sync is explicit and read-only. It never creates, edits, or deletes a List:
+
+```bash
+birdclaw sync lists --mode auto --json
+birdclaw sync lists --mode bird --max-lists 20 --member-limit 100 --max-member-pages 3 --delay-ms 1500 --json
+birdclaw lists list --json
+birdclaw lists members Builders --json
+birdclaw search tweets "sqlite" --list Builders --json
+birdclaw search tweets "sqlite" --list-id 1234567890 --json
+```
+
+Membership is stored as `complete`, `inferred`, `partial`, or `error`. Only a cursor-proven complete sync ends members that disappeared; inferred and partial runs preserve unseen edges. Search is offline and never triggers a live call.
 
 ### Research bookmarks and threads
 
@@ -574,13 +592,17 @@ data/timeline_edges/home.jsonl
 data/timeline_edges/mention.jsonl
 data/collections/likes.jsonl
 data/collections/bookmarks.jsonl
+data/lists/lists.jsonl
+data/lists/members.jsonl
 data/dms/conversations.jsonl
 data/dms/YYYY.jsonl
 data/moderation/blocks.jsonl
 data/moderation/mutes.jsonl
+data/<logical-shard>.part-NNNN.jsonl
 ```
 
 Tweets are sharded by year for human browsing and yearly analysis. Collection-only tweets whose real creation date is unknown go into `data/tweets/unknown.jsonl` instead of pretending they belong to 1970. Timeline membership is stored in `data/timeline_edges`; likes and bookmarks are stored as account-scoped collection edges in `data/collections`. DMs are sharded by year with `conversation_id` in each row; this keeps Git fast while preserving conversation membership.
+Any logical shard larger than 48 MiB is split into deterministic `.part-0001.jsonl` files. Import and validation accept both numbered parts and the earlier unsplit layout, so large private backups remain ordinary Git repositories without Git LFS.
 
 Use `backup sync` when the target is a private Git repo. It pulls first, merge-imports the remote backup into local SQLite, exports the local union back into text shards, commits, and pushes.
 

@@ -146,7 +146,7 @@ The archive ships with stale profile metadata (bios, follower counts, avatars fr
 birdclaw import hydrate-profiles --json
 ```
 
-This walks the imported profiles table and refreshes each entry through whichever transport is available (`xurl` first, `bird` second). On large archives, that can mean hundreds or thousands of live X profile reads and may spend API credits. Without a live transport, hydration is a no-op and the archive's snapshot stays.
+With xurl available, this walks the imported profiles table and refreshes each entry. On large archives, that can mean hundreds or thousands of live X profile reads and may spend API credits. In Bird-only mode, the command uses `bird whoami` to correct the seeded local account identity but does not bulk-hydrate imported profiles. Without a live transport, hydration is a no-op and the archive's snapshot stays.
 
 Avatars are written to `~/.birdclaw/media/thumbs/avatars/` so the web UI does not re-fetch them on every render.
 

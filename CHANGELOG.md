@@ -1,9 +1,60 @@
 # CHANGELOG
 
-## 0.8.6 - Unreleased
+## 0.9.5 - 2026-07-06
 
 ### Fixed
 
+- Keep desktop sidebar labels visible by applying screen-reader-only styling only below the compact breakpoint. (#91 - thanks @MarkVillacampa)
+
+## 0.9.4 - 2026-07-05
+
+### Fixed
+
+- `search tweets` now returns in well under a second on large archives (previously ~60s, minutes for common terms): the FTS5 match set is materialized once instead of SQLite re-running the MATCH scan per timeline edge row, the join order adapts to term frequency, the LIMIT is resolved on an id-only inner query, and snippets are computed only for returned rows.
+
+## 0.9.3 - 2026-07-04
+
+### Changed
+
+- Modernize Effect usage across the transports: hidden 429 retries now run through a composed `Schedule` (capped exponential backoff, deadline- and abort-aware), transport/auth lookups are memoized with `Effect.cachedWithTTL`, xurl failures carry a typed `XurlCommandError` with structured rate-limit classification, link-preview DNS resolution uses `Effect.timeoutFail`, xurl/bird operations are traced `Effect.fn` spans, and live read paths call Effect transports directly instead of round-tripping through Promise wrappers.
+
+## 0.9.2 - 2026-07-04
+
+### Fixed
+
+- Split oversized backup JSONL outputs into deterministic 48 MiB part files and serialize and validate them sequentially, keeping large archives below hosted Git limits without Git LFS.
+
+## 0.9.1 - 2026-07-02
+
+### Added
+
+- Route inbox scoring and Responses API requests through `BIRDCLAW_OPENAI_BASE_URL`, retain `OPENAI_BASE_URL` as a compatibility fallback, and add opt-in OpenAI transport diagnostics. (#89 - thanks @martintrojer)
+
+### Fixed
+
+- Correct the seeded local account handle, display name, user ID, and stale avatar from the authenticated Bird identity during explicit profile hydration. (#88 - thanks @martintrojer)
+
+## 0.9.0 - 2026-07-02
+
+### Added
+
+- Add explicit, rate-limited owned X List sync through Bird or xurl, durable List/member metadata with completeness state, deterministic backup shards, local List inspection, and `--list` / `--list-id` tweet search filters. (#65)
+- Add opt-in, per-account Home and Mentions auto-sync with persisted intervals, overlap protection, hidden-page pauses, visible status, and failure backoff. (#73 - thanks @Gatsby1s)
+
+### Changed
+
+- Refresh runtime and development dependencies to current supported releases, including Vite 8.1, Node 26 type definitions, and the July 1 TypeScript native preview.
+
+### Fixed
+
+- Restore web Likes and Bookmarks sync when automatic transport selection falls back to Bird without all-pages mode. (#87 - thanks @zuyu)
+- Bundle the TanStack Start H3 runtime into production server artifacts so installed npm packages can start without undeclared transitive dependencies.
+- Add completed Today digest PDF export with route-scoped print styling, while excluding partial failed streams. (#77 - thanks @Gatsby1s)
+- Make the Today digest's selected period visually distinct and expose its pressed state to assistive technology. (#72 - thanks @Gatsby1s)
+- Keep backup Git commits inside the configured repository root and pin hashed backup text files to LF line endings. (#79 - thanks @rodriguez46p-ui)
+- Persist profile avatars exposed by Bird's full live-sync payloads. (#75 - thanks @RajvardhanPatil07)
+- Persist quoted tweet payloads returned by Bird-backed live syncs so quote cards render without a separate hydrate. (#76 - thanks @lukaskawerau)
+- Keep included quote-only replies out of local replied/unreplied state during collection and thread-context syncs. (#76 - thanks @lukaskawerau)
 - Show full tweet text in Today citation popovers instead of truncating long posts after six lines.
 - Show inline tweet images in Today citation popovers instead of leaving media-only `t.co` links in the preview text.
 

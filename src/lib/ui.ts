@@ -43,7 +43,7 @@ export const navLinkActiveClass = "nav-link-active font-bold";
 
 export const navLinkIconClass = "shrink-0";
 
-export const navLinkLabelClass = "sr-only min-[1100px]:not-sr-only";
+export const navLinkLabelClass = "max-[1100px]:sr-only";
 
 export const navLinkLabelCompactClass = "sr-only";
 
@@ -158,6 +158,9 @@ export const segmentClass =
 	"rounded-full border-0 bg-transparent px-3 py-1 text-[13px] font-medium text-[var(--ink-soft)] capitalize transition-colors duration-150";
 
 export const segmentActiveClass = "bg-[var(--bg-active)] text-[var(--ink)]";
+
+export const segmentAccentActiveClass =
+	"bg-[var(--accent-soft)]! text-[var(--accent)]! shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--accent)_36%,transparent)]";
 
 /* Composer (reply textarea). */
 export const composerShellClass =

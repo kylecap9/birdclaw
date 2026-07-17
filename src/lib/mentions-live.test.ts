@@ -32,9 +32,16 @@ vi.mock("./bird", async () => {
 });
 
 vi.mock("./xurl", () => ({
-	listMentionsViaXurl: (...args: unknown[]) => listMentionsViaXurlMock(...args),
-	lookupUsersByHandles: (...args: unknown[]) =>
-		lookupUsersByHandlesMock(...args),
+	listMentionsViaXurlEffect: (...args: unknown[]) =>
+		Effect.tryPromise({
+			try: () => listMentionsViaXurlMock(...args),
+			catch: (error) => error,
+		}),
+	lookupUsersByHandlesEffect: (...args: unknown[]) =>
+		Effect.tryPromise({
+			try: () => lookupUsersByHandlesMock(...args),
+			catch: (error) => error,
+		}),
 }));
 
 const tempDirs: string[] = [];
@@ -1549,6 +1556,8 @@ describe("cached live mentions", () => {
 						id: "88",
 						username: "birdsam",
 						name: "Bird Sam",
+						profile_image_url:
+							"https://pbs.twimg.com/profile_images/88/avatar_normal.jpg",
 					},
 				],
 			},
@@ -1577,6 +1586,13 @@ describe("cached live mentions", () => {
 			maxResults: 5,
 		});
 		expect(lookupUsersByHandlesMock).not.toHaveBeenCalled();
+		expect(
+			getNativeDb()
+				.prepare("select avatar_url from profiles where handle = ?")
+				.get("birdsam"),
+		).toEqual({
+			avatar_url: "https://pbs.twimg.com/profile_images/88/avatar.jpg",
+		});
 
 		const mentions = listTimelineItems({
 			resource: "mentions",

@@ -92,6 +92,19 @@ describe("bird transport wrapper", () => {
 						username: "sam",
 						name: "Sam",
 					},
+					_raw: {
+						core: {
+							user_results: {
+								result: {
+									rest_id: "42",
+									avatar: {
+										image_url:
+											"https://pbs.twimg.com/profile_images/42/avatar_normal.jpg",
+									},
+								},
+							},
+						},
+					},
 					media: [
 						{
 							type: "photo",
@@ -107,7 +120,7 @@ describe("bird transport wrapper", () => {
 			maxResults: 12,
 		});
 
-		expectBirdCommandCall(1, ["mentions", "-n", "12", "--json"]);
+		expectBirdCommandCall(1, ["mentions", "-n", "12", "--json-full"]);
 		expect(payload).toEqual({
 			data: [
 				expect.objectContaining({
@@ -137,6 +150,8 @@ describe("bird transport wrapper", () => {
 						id: "42",
 						username: "sam",
 						name: "Sam",
+						profile_image_url:
+							"https://pbs.twimg.com/profile_images/42/avatar_normal.jpg",
 					},
 				],
 			},
@@ -171,7 +186,67 @@ describe("bird transport wrapper", () => {
 				data: [expect.objectContaining({ id: "tweet_effect_1" })],
 			}),
 		);
-		expectBirdCommandCall(1, ["mentions", "-n", "3", "--json"]);
+		expectBirdCommandCall(1, ["mentions", "-n", "3", "--json-full"]);
+	});
+
+	it("falls back to standard JSON when bird lacks --json-full", async () => {
+		process.env.BIRDCLAW_BIRD_COMMAND = "/tmp/bird";
+		mockBirdRejectOnce(
+			Object.assign(new Error("Command failed"), {
+				stderr: "error: unknown option '--json-full'",
+			}),
+		);
+		mockBirdStdoutOnce("[]");
+		const { listMentionsViaBird } = await import("./bird");
+
+		await expect(listMentionsViaBird({ maxResults: 5 })).resolves.toMatchObject(
+			{
+				data: [],
+			},
+		);
+		expectBirdCommandCall(1, ["mentions", "-n", "5", "--json-full"]);
+		expectBirdCommandCall(2, ["mentions", "-n", "5", "--json"]);
+	});
+
+	it("keeps an avatar found on a later tweet from the same author", async () => {
+		const { __test__ } = await import("./bird");
+
+		expect(
+			__test__.normalizeBirdTweets([
+				{
+					id: "tweet_without_avatar",
+					text: "first",
+					createdAt: "2026-06-24T00:00:00.000Z",
+					authorId: "42",
+					author: { username: "sam", name: "Sam" },
+				},
+				{
+					id: "tweet_with_avatar",
+					text: "second",
+					createdAt: "2026-06-24T00:01:00.000Z",
+					authorId: "42",
+					_raw: {
+						core: {
+							user_results: {
+								result: {
+									rest_id: "42",
+									avatar: { image_url: "https://img.example/sam_normal.jpg" },
+								},
+							},
+						},
+					},
+				},
+			]),
+		).toMatchObject({
+			includes: {
+				users: [
+					{
+						id: "42",
+						profile_image_url: "https://img.example/sam_normal.jpg",
+					},
+				],
+			},
+		});
 	});
 
 	it("omits max-pages for single-page bird search", async () => {
@@ -193,7 +268,7 @@ describe("bird transport wrapper", () => {
 				oldest_id: undefined,
 			},
 		});
-		expectBirdCommandCall(1, ["search", "ChatGPT", "-n", "5", "--json"]);
+		expectBirdCommandCall(1, ["search", "ChatGPT", "-n", "5", "--json-full"]);
 
 		await searchTweetsViaBird("ChatGPT", {
 			maxResults: 5,
@@ -205,10 +280,10 @@ describe("bird transport wrapper", () => {
 			"ChatGPT",
 			"-n",
 			"5",
-			"--json",
 			"--all",
 			"--max-pages",
 			"2",
+			"--json-full",
 		]);
 	});
 
@@ -390,6 +465,7 @@ describe("bird transport wrapper", () => {
 		await expect(getAuthenticatedBirdAccount()).resolves.toEqual({
 			id: "25401953",
 			username: "steipete",
+			name: "Peter Steinberger 2026",
 		});
 		expectBirdCommandCall(1, ["whoami"]);
 	});
@@ -509,15 +585,98 @@ describe("bird transport wrapper", () => {
 			includes: { users: [{ id: "43", username: "amelia", name: "Amelia" }] },
 			meta: expect.objectContaining({ result_count: 1 }),
 		});
-		expectBirdCommandCall(1, ["likes", "-n", "5", "--json"]);
+		expectBirdCommandCall(1, ["likes", "-n", "5", "--json-full"]);
 		expectBirdCommandCall(2, [
 			"bookmarks",
 			"-n",
 			"7",
-			"--json",
 			"--all",
 			"--max-pages",
 			"2",
+			"--json-full",
+		]);
+	});
+
+	it("omits max-pages for single-page bird saved collections", async () => {
+		process.env.BIRDCLAW_BIRD_COMMAND = "/tmp/bird";
+		mockBirdStdoutOnce("[]");
+		mockBirdStdoutOnce("[]");
+		const { listBookmarkedTweetsViaBird, listLikedTweetsViaBird } =
+			await import("./bird");
+
+		await listLikedTweetsViaBird({ maxResults: 5, maxPages: 2 });
+		await listBookmarkedTweetsViaBird({ maxResults: 7, maxPages: 3 });
+
+		expect(execFileAsyncMock).toHaveBeenCalledTimes(2);
+		expectBirdCommandCall(1, ["likes", "-n", "5", "--json-full"]);
+		expectBirdCommandCall(2, ["bookmarks", "-n", "7", "--json-full"]);
+	});
+
+	it("normalizes owned Lists and paged List membership", async () => {
+		process.env.BIRDCLAW_BIRD_COMMAND = "/tmp/bird";
+		mockBirdStdoutOnce(
+			JSON.stringify([
+				{
+					id: "list_1",
+					name: "Builders",
+					description: "People who build",
+					memberCount: 2,
+					subscriberCount: 3,
+					isPrivate: false,
+					owner: { id: "42", username: "owner", name: "Owner" },
+				},
+			]),
+		);
+		mockBirdStdoutOnce(
+			JSON.stringify({
+				users: [
+					{
+						id: "7",
+						username: "member",
+						name: "Member",
+						followersCount: 50,
+					},
+				],
+				nextCursor: "cursor-next",
+			}),
+		);
+		const { listOwnedXListsViaBird, listXListMembersViaBird } =
+			await import("./bird");
+
+		await expect(
+			listOwnedXListsViaBird({ maxResults: 20 }),
+		).resolves.toMatchObject({
+			data: [
+				{
+					id: "list_1",
+					name: "Builders",
+					memberCount: 2,
+					followerCount: 3,
+					ownerUsername: "owner",
+				},
+			],
+		});
+		await expect(
+			listXListMembersViaBird({
+				listId: "list_1",
+				maxResults: 20,
+				maxPages: 3,
+			}),
+		).resolves.toMatchObject({
+			data: [{ id: "7", username: "member" }],
+			meta: { next_token: "cursor-next", pagination_known_complete: false },
+		});
+		expect(execFileAsyncMock).toHaveBeenCalledTimes(2);
+		expectBirdCommandCall(1, ["lists", "-n", "20", "--json"]);
+		expectBirdCommandCall(2, [
+			"list-members",
+			"list_1",
+			"-n",
+			"20",
+			"--json",
+			"--all",
+			"--max-pages",
+			"3",
 		]);
 	});
 
@@ -543,7 +702,7 @@ describe("bird transport wrapper", () => {
 			includes: { users: [{ id: "45", username: "riley", name: "Riley" }] },
 			meta: expect.objectContaining({ result_count: 1 }),
 		});
-		expectBirdCommandCall(1, ["home", "-n", "9", "--json", "--following"]);
+		expectBirdCommandCall(1, ["home", "-n", "9", "--following", "--json-full"]);
 	});
 
 	it("maps bird follower lists into xurl-compatible users", async () => {
@@ -601,6 +760,7 @@ describe("bird transport wrapper", () => {
 				result_count: 1,
 				page_count: 1,
 				next_token: "cursor-two",
+				pagination_known_complete: false,
 			},
 		});
 		await expect(
@@ -623,6 +783,7 @@ describe("bird transport wrapper", () => {
 				result_count: 1,
 				page_count: 1,
 				next_token: null,
+				pagination_known_complete: true,
 			},
 		});
 		expectBirdCommandCall(1, [
@@ -673,9 +834,9 @@ describe("bird transport wrapper", () => {
 		expectBirdCommandCall(1, [
 			"thread",
 			"reply_1",
-			"--json",
 			"--max-pages",
 			"2",
+			"--json-full",
 		]);
 		expect(execFileAsyncMock.mock.calls[0]?.[2]).toEqual(
 			expect.objectContaining({ timeout: 5000 }),
@@ -742,7 +903,7 @@ describe("bird transport wrapper", () => {
 			includes: { users: [{ id: "42", username: "sam", name: "Sam" }] },
 			meta: expect.objectContaining({ result_count: 1 }),
 		});
-		expectBirdCommandCall(1, ["read", "tweet_1", "--json"]);
+		expectBirdCommandCall(1, ["read", "tweet_1", "--json-full"]);
 	});
 
 	it("looks up profiles through bird user json", async () => {
@@ -952,6 +1113,47 @@ describe("bird transport wrapper", () => {
 				},
 			}),
 		).toEqual([{ type: "quoted", id: "quoted" }]);
+		expect(
+			__test__.normalizeBirdTweets([
+				{
+					id: "1",
+					text: "quoting",
+					createdAt: "2026-05-02T00:00:00.000Z",
+					authorId: "42",
+					author: { username: "sam", name: "Sam" },
+					quotedTweet: {
+						id: "quoted",
+						text: "quoted body",
+						createdAt: "2026-05-01T00:00:00.000Z",
+						authorId: "43",
+						author: { username: "alex", name: "Alex" },
+					},
+				},
+			]),
+		).toEqual(
+			expect.objectContaining({
+				data: [
+					expect.objectContaining({
+						id: "1",
+						referenced_tweets: [{ type: "quoted", id: "quoted" }],
+					}),
+				],
+				includes: {
+					users: [
+						{ id: "42", username: "sam", name: "Sam" },
+						{ id: "43", username: "alex", name: "Alex" },
+					],
+					tweets: [
+						expect.objectContaining({
+							id: "quoted",
+							author_id: "43",
+							text: "quoted body",
+							public_metrics: {},
+						}),
+					],
+				},
+			}),
+		);
 		expect(
 			__test__.normalizeBirdTweets([
 				{

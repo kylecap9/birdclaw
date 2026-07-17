@@ -345,6 +345,8 @@ export interface TimelineQuery {
 	// query resource — kept out of the public resourceKindSchema on purpose.
 	resource: Exclude<ResourceKind, "dms"> | "ai";
 	account?: string;
+	listAccountId?: string;
+	listId?: string;
 	search?: string;
 	replyFilter?: ReplyFilter;
 	since?: string;
@@ -600,6 +602,7 @@ export interface XurlMentionsResponse {
 	embedded?: XurlMentionData[];
 	includes?: {
 		users?: XurlMentionUser[];
+		tweets?: XurlTweetData[];
 		media?: XurlMediaItem[];
 	};
 	meta?: Record<string, unknown>;
@@ -630,6 +633,7 @@ export interface XurlTweetsResponse {
 	data: XurlTweetData[];
 	includes?: {
 		users?: XurlMentionUser[];
+		tweets?: XurlTweetData[];
 		media?: XurlMediaItem[];
 	};
 	meta?: Record<string, unknown>;
@@ -638,6 +642,28 @@ export interface XurlTweetsResponse {
 export interface XurlFollowUsersResponse {
 	data: XurlMentionUser[];
 	meta?: Record<string, unknown>;
+}
+
+export interface XListRecord {
+	id: string;
+	name: string;
+	description?: string;
+	memberCount?: number;
+	followerCount?: number;
+	isPrivate?: boolean;
+	ownerId?: string;
+	ownerUsername?: string;
+	ownerName?: string;
+	createdAt?: string;
+	raw?: Record<string, unknown>;
+}
+
+export interface XListPage {
+	data: XListRecord[];
+	meta: {
+		result_count: number;
+		next_token?: string | null;
+	};
 }
 
 export interface FollowGraphProfile {
