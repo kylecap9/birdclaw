@@ -1,4 +1,5 @@
 import type { FollowDirection, InboxKind, ResourceKind } from "./api-enums";
+
 export type { FollowDirection, InboxKind, ResourceKind } from "./api-enums";
 
 export type ReplyFilter = "all" | "replied" | "unreplied";
@@ -150,6 +151,7 @@ export interface EmbeddedTweet {
 export interface TweetConversation {
 	anchorId: string;
 	items: EmbeddedTweet[];
+	truncated: boolean;
 }
 
 export interface BlockItem {
