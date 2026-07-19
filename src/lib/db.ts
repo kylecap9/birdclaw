@@ -1,9 +1,11 @@
+import { existsSync } from "node:fs";
 import NativeSqliteDatabase, {
 	type Database,
 	SQLITE_BUSY_TIMEOUT_MS,
 } from "./sqlite";
 import { ensureBirdclawDirs, getBirdclawPaths } from "./config";
 import {
+	getDatabaseSchemaVersion,
 	type DatabaseMigration,
 	runDatabaseMigrations,
 } from "./database-migrations";
@@ -126,6 +128,14 @@ const BASE_SCHEMA_SQL = `
     entities_json text not null default '{}',
     media_json text not null default '[]',
     quoted_tweet_id text
+  );
+
+  create table if not exists tweet_sources (
+    tweet_id text not null,
+    source text not null,
+    source_url text not null,
+    observed_at text not null,
+    primary key (tweet_id, source)
   );
 
   create table if not exists tweet_collections (
@@ -495,6 +505,18 @@ function ensureTweetCollectionsTable(db: Database) {
       raw_json text not null default '{}',
       updated_at text not null,
       primary key (account_id, tweet_id, kind)
+    );
+  `);
+}
+
+function ensureTweetSourcesTable(db: Database) {
+	db.exec(`
+    create table if not exists tweet_sources (
+      tweet_id text not null,
+      source text not null,
+      source_url text not null,
+      observed_at text not null,
+      primary key (tweet_id, source)
     );
   `);
 }
@@ -892,6 +914,20 @@ const DATABASE_MIGRATIONS: readonly DatabaseMigration[] = [
 			ensureXListTables(db);
 		},
 	},
+	{
+		version: 4,
+		name: "index cached tweet reply traversal",
+		up: (db) => {
+			db.exec(
+				"create index if not exists idx_tweets_reply_to on tweets(reply_to_id)",
+			);
+		},
+	},
+	{
+		version: 5,
+		name: "add durable tweet source provenance",
+		up: ensureTweetSourcesTable,
+	},
 ];
 
 function ensureDemoData(db: Database) {
@@ -903,8 +939,17 @@ function ensureDemoData(db: Database) {
 	demoSeedAttempted = true;
 }
 
+function shouldSeedDemoData(options: InitDatabaseOptions) {
+	return (
+		options.seedDemoData === true ||
+		(options.seedDemoData === undefined &&
+			process.env.BIRDCLAW_TEST_SEED_DEMO_DATA === "1")
+	);
+}
+
 function initDatabase(options: InitDatabaseOptions = {}) {
 	ensureBirdclawDirs();
+	const seedDemo = shouldSeedDemoData(options);
 
 	if (!nativeDb) {
 		const { dbPath } = getBirdclawPaths();
@@ -915,10 +960,10 @@ function initDatabase(options: InitDatabaseOptions = {}) {
 		  pragma foreign_keys = on;
 		`);
 		runDatabaseMigrations(nativeDb, DATABASE_MIGRATIONS);
-		if (options.seedDemoData !== false) {
+		if (seedDemo) {
 			ensureDemoData(nativeDb);
 		}
-	} else if (options.seedDemoData !== false) {
+	} else if (seedDemo) {
 		ensureDemoData(nativeDb);
 	}
 }
@@ -935,6 +980,62 @@ function createDatabaseConnection(
 	});
 }
 
+function closeDatabaseIgnoringErrors(db: Database) {
+	try {
+		db.close();
+	} catch {
+		// Preserve the error that triggered cleanup.
+	}
+}
+
+function createReadDatabaseConnection(dbPath: string) {
+	const db = createDatabaseConnection(dbPath, "reader", { readonly: true });
+	try {
+		db.exec(`
+		  pragma busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS};
+		  pragma foreign_keys = on;
+		  pragma query_only = on;
+		`);
+		return db;
+	} catch (error) {
+		closeDatabaseIgnoringErrors(db);
+		throw error;
+	}
+}
+
+function createReadDatabasePool(
+	dbPath: string,
+	validateFirst?: (db: Database) => void,
+) {
+	const pool: Database[] = [];
+	try {
+		const first = createReadDatabaseConnection(dbPath);
+		pool.push(first);
+		validateFirst?.(first);
+		pool.push(createReadDatabaseConnection(dbPath));
+		return pool;
+	} catch (error) {
+		for (const db of pool) closeDatabaseIgnoringErrors(db);
+		throw error;
+	}
+}
+
+function assertCurrentDatabaseSchema(db: Database) {
+	const expectedVersion = DATABASE_MIGRATIONS.at(-1)?.version ?? 0;
+	const actualVersion = getDatabaseSchemaVersion(db);
+	if (actualVersion !== expectedVersion) {
+		throw new Error(
+			`Birdclaw database schema ${String(actualVersion)} is not ready for version ${String(expectedVersion)}`,
+		);
+	}
+}
+
+function nextReadDb() {
+	const db = readDbs[readDbIndex % readDbs.length] as Database;
+	readDbIndex = (readDbIndex + 1) % readDbs.length;
+	return db;
+}
+
 export function getNativeDb(options: InitDatabaseOptions = {}) {
 	initDatabase(options);
 	return nativeDb as Database;
@@ -944,21 +1045,23 @@ export function getReadDb(options: InitDatabaseOptions = {}) {
 	initDatabase(options);
 	if (readDbs.length === 0) {
 		const { dbPath } = getBirdclawPaths();
-		readDbs = Array.from({ length: 2 }, () => {
-			const db = createDatabaseConnection(dbPath, "reader", {
-				readonly: true,
-			});
-			db.exec(`
-			  pragma busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS};
-			  pragma foreign_keys = on;
-			  pragma query_only = on;
-			`);
-			return db;
-		});
+		readDbs = createReadDatabasePool(dbPath);
 	}
-	const db = readDbs[readDbIndex % readDbs.length] as Database;
-	readDbIndex = (readDbIndex + 1) % readDbs.length;
-	return db;
+	return nextReadDb();
+}
+
+export function getStrictReadDb() {
+	if (readDbs.length > 0) {
+		assertCurrentDatabaseSchema(readDbs[0] as Database);
+		return nextReadDb();
+	}
+	const { dbPath } = getBirdclawPaths();
+	if (!existsSync(dbPath)) {
+		throw new Error("Birdclaw database is not initialized");
+	}
+
+	readDbs = createReadDatabasePool(dbPath, assertCurrentDatabaseSchema);
+	return nextReadDb();
 }
 
 export function closeDatabase() {

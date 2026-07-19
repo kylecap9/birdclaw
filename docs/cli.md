@@ -41,14 +41,20 @@ User config:
 - `BIRDCLAW_HOME`
 - `BIRDCLAW_CONFIG`
 - `BIRDCLAW_ACTIONS_TRANSPORT`
+- `BIRDCLAW_BIRD_COMMAND`
+- `BIRDCLAW_BASH_COMMAND`
+- `BIRDCLAW_MCP_TOKEN`
+- `BIRDCLAW_MCP_PUBLIC_URL`
+- `BIRDCLAW_MCP_ACCOUNT`
 
 ## Command tree
 
 ```text
-birdclaw init
+birdclaw init [--demo]
 birdclaw auth status
 birdclaw auth use <transport>
 birdclaw import archive [path]
+birdclaw import tweet <tweet-id-or-url...> --fxtwitter
 birdclaw sync all
 birdclaw sync tweets
 birdclaw sync authored
@@ -124,9 +130,22 @@ birdclaw debug transport
 ### `init`
 
 - create app dir
-- create DB
+- create an empty DB
 - write default config if absent
-- optionally detect `xurl` and `bird`
+- `--demo` seeds sample tweets, DMs, profiles, and links without authentication or network access
+- print useful next commands for the selected setup path
+
+Account-capable commands accept `--account <username>` or a stored account ID. Set `accounts.default` in `config.json` for a reversible default; an explicit flag wins.
+
+### `import tweet <tweet-id-or-url...>`
+
+- disabled unless `--fxtwitter` is passed on the same invocation
+- sends only requested public tweet IDs to the fixed read-only `https://api.fxtwitter.com` service
+- rejects custom origins, redirects, noncanonical URLs, and batches larger than 20 tweets
+- stores `fxtwitter` source markers in `tweet_sources` and `data/tweet_sources.jsonl` backups
+- discloses requested IDs plus ordinary network metadata such as IP address and request time to the third-party service
+
+See [Public tweet import](public-tweets.md) for the full privacy and capability boundary.
 
 ### `auth status`
 
@@ -166,6 +185,7 @@ birdclaw backup sync --repo ~/Projects/backup-birdclaw --remote https://github.c
 Shard contract:
 
 - tweets: `data/tweets/YYYY.jsonl`
+- tweet provenance: `data/tweet_sources.jsonl`
 - unknown tweet dates: `data/tweets/unknown.jsonl`
 - profiles: `data/profiles.jsonl` includes bio, follower/following counts, profile URL, location, verification type, structured URL entities, and raw profile JSON
 - affiliations: `data/profile_affiliations.jsonl` includes X badge/highlighted-label organization edges
@@ -202,6 +222,10 @@ by default. Override it with `BIRDCLAW_BIRD_COMMAND` or:
 	}
 }
 ```
+
+On Windows, Birdclaw runs the redirect wrapper through Git Bash. Common Git for
+Windows installations are detected automatically; set `BIRDCLAW_BASH_COMMAND`
+to the full path of `bash.exe` for a portable or non-standard installation.
 
 ### `backup import`
 
@@ -589,6 +613,7 @@ birdclaw media fetch --no-include-video --parallel 3 --pacing-ms 250 --json
 
 Flags:
 
+- `--account <username>` — account username or stored ID
 - `--limit <n>`
 
 Examples:
@@ -751,6 +776,22 @@ private proxy requires `BIRDCLAW_ALLOW_REMOTE_WEB=1`. To require an app-level
 token too, set `BIRDCLAW_WEB_TOKEN` and send it as `x-birdclaw-token` or a
 `birdclaw_token` cookie.
 
+The same process can expose an adapter-owned, read-only Streamable HTTP MCP
+endpoint at the exact path `/mcp`. Configure both `BIRDCLAW_MCP_TOKEN` and
+`BIRDCLAW_MCP_PUBLIC_URL`; the MCP token must be at least 32 bytes and must
+differ from `BIRDCLAW_WEB_TOKEN`. `BIRDCLAW_MCP_ACCOUNT` optionally selects one
+server-side account by id or handle; otherwise tools read the default account.
+
+When MCP is configured, startup validates the configuration, selected account,
+and an existing initialized database at the current schema. It does not create
+or migrate the database for MCP. Run `birdclaw init` or import/migrate with a
+trusted CLI command before starting the server.
+
+HTTP MCP URLs are accepted only for loopback hosts. External MCP URLs must use
+HTTPS on a dedicated hostname. Birdclaw reserves that configured hostname for
+MCP and denies every path except `/mcp`; the proxy and outer authentication
+policy must enforce the same rule. See the [MCP server guide](mcp.md).
+
 ### `graph summary`
 
 - cache-only SQLite read
@@ -824,6 +865,7 @@ stderr:
 
 ```bash
 birdclaw init
+birdclaw init --demo
 birdclaw auth status
 birdclaw import archive ~/Downloads/twitter-archive.zip --select tweets,directMessages
 birdclaw sync all --transport xurl
